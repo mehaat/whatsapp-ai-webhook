@@ -34,3 +34,23 @@ services:
         value: /var/data/shop_tokens.json
       - key: PYTHON_VERSION
         value: 3.12.7
+      # --- v4.0 (all optional; safe defaults preserve v3.0 behaviour) ---
+      # Native WhatsApp/Meta Commerce catalog id (blank -> text product cards).
+      - key: WHATSAPP_CATALOG_ID
+        sync: false
+      # Send a short Gemini recommendation after product cards ("false" = cards only).
+      - key: PRODUCT_RECO_ENABLED
+        value: "true"
+      # Structured logs: "text" (default) or "json".
+      - key: LOG_FORMAT
+        value: "text"
+      # Optional persistence layer (SQLAlchemy). "false" keeps in-memory only.
+      - key: USE_DATABASE
+        value: "false"
+      # Database URL used only when USE_DATABASE=true (SQLite default on the
+      # mounted disk; set a Postgres URL for durable, multi-worker storage).
+      - key: DATABASE_URL
+        value: sqlite:////var/data/mehaat.db
+      # Optional Fernet key to encrypt Shopify tokens at rest (blank -> plaintext).
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false

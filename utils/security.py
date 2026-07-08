@@ -180,3 +180,108 @@ def _cleanup_expired_states() -> None:
     expired = [tok for tok, ts in _pending_states.items() if now - ts > _STATE_TTL_SECONDS]
     for tok in expired:
         _pending_states.pop(tok, None)
+
+
+# --------------------------------------------------------------------------
+# PII masking (v4.0) — used before writing customer text to logs / storage
+# --------------------------------------------------------------------------
+
+_EMAIL_RE = re.compile(r"([A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]*(@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})")
+_PHONE_RE = re.compile(r"(?<!\d)(\+?\d[\d\s\-]{7,}\d)(?!\d)")
+
+
+def mask_pii(text: str) -> str:
+    """Mask emails and phone numbers in free text for safe logging/storage.
+
+    Examples:
+        "call me on +91 98765 43210" -> "call me on +91 *****3210"
+        "a@b.com"                    -> "a****@b.com"
+    """
+    if not text:
+        return text or ""
+
+    def _mask_email(match: "re.Match") -> str:
+        return f"{match.group(1)}****{match.group(2)}"
+
+    def _mask_phone(match: "re.Match") -> str:
+        digits = re.sub(r"\D", "", match.group(1))
+        if len(digits) < 4:
+            return "****"
+        return "*****" + digits[-4:]
+
+    masked = _EMAIL_RE.sub(_mask_email, text)
+    masked = _PHONE_RE.sub(_mask_phone, masked)
+    return masked
+
+
+# --------------------------------------------------------------------------
+# Optional token encryption at rest (v4.0)
+# --------------------------------------------------------------------------
+#
+# When ``TOKEN_ENCRYPTION_KEY`` (a urlsafe base64 Fernet key) is configured and
+# the ``cryptography`` package is installed, access tokens can be encrypted
+# before persistence. When either is absent, these helpers pass the value
+# through unchanged, preserving the exact v3.0 plaintext behaviour.
+
+try:  # pragma: no cover - exercised only when cryptography is installed
+    from cryptography.fernet import Fernet, InvalidToken  # type: ignore
+
+    _CRYPTO_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    Fernet = None  # type: ignore
+    InvalidToken = Exception  # type: ignore
+    _CRYPTO_AVAILABLE = False
+
+_ENC_PREFIX = "enc::"
+
+
+def _get_cipher():
+    """Return a Fernet cipher if a key is configured and crypto is available."""
+    if not _CRYPTO_AVAILABLE:
+        return None
+    try:
+        from config import config
+
+        key = config.token_encryption_key
+    except Exception:  # noqa: BLE001
+        key = ""
+    if not key:
+        return None
+    try:
+        return Fernet(key.encode("utf-8") if isinstance(key, str) else key)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("SECURITY | Invalid TOKEN_ENCRYPTION_KEY: %s", exc)
+        return None
+
+
+def generate_encryption_key() -> str:
+    """Generate a new Fernet key (utility for provisioning)."""
+    if not _CRYPTO_AVAILABLE:
+        raise RuntimeError("cryptography is not installed")
+    return Fernet.generate_key().decode("utf-8")
+
+
+def encrypt_token(value: str) -> str:
+    """Encrypt a token for storage. Returns plaintext unchanged if disabled."""
+    if not value:
+        return value
+    cipher = _get_cipher()
+    if cipher is None:
+        return value
+    token = cipher.encrypt(value.encode("utf-8")).decode("utf-8")
+    return _ENC_PREFIX + token
+
+
+def decrypt_token(value: str) -> str:
+    """Decrypt a stored token. Handles both plaintext and encrypted values."""
+    if not value or not value.startswith(_ENC_PREFIX):
+        return value
+    cipher = _get_cipher()
+    if cipher is None:
+        logger.error("SECURITY | Encrypted token found but no cipher available")
+        return value
+    try:
+        return cipher.decrypt(value[len(_ENC_PREFIX):].encode("utf-8")).decode("utf-8")
+    except InvalidToken:
+        logger.error("SECURITY | Failed to decrypt token (invalid key?)")
+        return value

@@ -1,6 +1,15 @@
-# ME-HAAT Fashion AI Bot v3.0
+# ME-HAAT Fashion AI Bot v4.0
 
-Production-ready WhatsApp AI Sales Assistant for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — now upgraded to full **Shopify OAuth** (Dev Dashboard app model), modular architecture, and expanded Shopify + WhatsApp capabilities.
+Production-ready WhatsApp AI Sales Assistant for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — on full **Shopify OAuth**, a modular architecture, live product cards, and enterprise foundations.
+
+## What's New in v4.0 (Phase 1)
+
+- **Live product cards fix** — messages like "Show saree", "blue silk saree under 3000", "party wear" now trigger a live Shopify search and reply with real WhatsApp **product cards** (title, price, currency, availability, category, variants, short description, product URL — max 5). The static catalogue link is used only as a fallback when no products are found or Shopify is unavailable.
+- **Pagination** — reply **"more"** / **"next"** to page through additional results (state kept in conversation memory).
+- **Native WhatsApp catalog** — when `WHATSAPP_CATALOG_ID` is set, native Product Messages are sent, with automatic fallback to formatted text cards.
+- **Enterprise foundations (opt-in, backward compatible)** — SQLAlchemy persistence layer (`USE_DATABASE`), structured JSON logging + request trace ids (`LOG_FORMAT=json`), PII masking, optional token encryption at rest (`TOKEN_ENCRYPTION_KEY`), security headers, and `/health` + `/health/live` + `/health/ready` probes.
+
+See **`docs/V4.0_RELEASE_NOTES.md`** for the full file-by-file changelog, deployment steps, verification checklist, and rollback plan, and **`docs/V4.0_ROADMAP.md`** for the remaining enterprise phases. Everything from v3.0 below is preserved and carried forward unchanged.
 
 ## What's New in v3.0
 

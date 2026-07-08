@@ -1,7 +1,7 @@
 """
 app.py
 ------
-ME-HAAT Fashion AI Bot v3.0
+ME-HAAT Fashion AI Bot v4.0
 Production WhatsApp AI Sales Assistant — Shopify OAuth Edition.
 
 Entry point for the Flask application. Wires together:
@@ -9,7 +9,16 @@ Entry point for the Flask application. Wires together:
     - whatsapp.webhook: WhatsApp Cloud API webhook routes
     - ai.gemini / ai.faq / ai.prompts : AI grounding + generation
     - shopify.search / orders / inventory : verified Shopify data
-    - memory.store   : per-customer conversation memory
+    - memory.store   : per-customer conversation memory + search pagination
+    - middleware     : security headers + per-request trace context
+    - database       : optional SQLAlchemy persistence (opt-in, USE_DATABASE)
+
+v4.0 headline change
+    Product-search messages ("show saree", "red silk saree", "under 3000", …)
+    now trigger a live Shopify search and reply with real WhatsApp product
+    cards *first*. The static catalogue link is only used as a fallback when no
+    products are found or Shopify is unavailable. Customers can page through
+    results with "more" / "next".
 
 Run locally:
     gunicorn app:app --bind 0.0.0.0:$PORT
@@ -20,7 +29,7 @@ See README.md for full environment variable and deployment instructions.
 from __future__ import annotations
 
 import time
-from typing import Optional
+from typing import List, Optional
 
 from flask import Flask, jsonify
 
@@ -29,24 +38,53 @@ from ai.gemini import generate_reply
 from ai.prompts import CATALOGUE_LINK
 from config import config
 from memory.store import conversation_memory
+from middleware import register_middleware
 from shopify import orders as shopify_orders
 from shopify import search as shopify_search
 from shopify.auth import shopify_auth_bp, token_store
+from utils.health import build_health_report, liveness, readiness
 from utils.language import build_greeting, detect_language, is_greeting
 from utils.logging import logger
 from utils.ratelimit import RateLimiter
 from utils.security import contains_injection_attempt, sanitize_input
-from whatsapp.sender import send_button_message, send_product_card, send_text_message
+from whatsapp.sender import send_products, send_text_message
 from whatsapp.webhook import init_webhook, whatsapp_webhook_bp
 
+# Optional persistence layer. Import is guarded so a missing SQLAlchemy install
+# or an unconfigured database can never prevent the app from starting.
+try:
+    from database import bootstrap_database, log_ai_interaction
+except Exception as exc:  # noqa: BLE001 - never let optional infra break startup
+    logger.warning("DATABASE | Persistence layer unavailable: %s", exc)
+
+    def bootstrap_database() -> None:  # type: ignore[misc]
+        return None
+
+    def log_ai_interaction(*args, **kwargs) -> None:  # type: ignore[misc]
+        return None
+
 FALLBACK_MESSAGE = "I don't have confirmed information. Please contact our support team."
+
+# Keywords that mean "show me the next page of results".
+_MORE_KEYWORDS = (
+    "more", "next", "show more", "aur", "aur dikhao", "next page",
+    "and more", "load more", "aur batao", "more options",
+)
+
+# How many products to fetch per search (a superset of the 5 shown, so that
+# "more" has something to page through).
+_SEARCH_FETCH_LIMIT = 15
+_PAGE_SIZE = 5
 
 app = Flask(__name__)
 app.register_blueprint(shopify_auth_bp)
 app.register_blueprint(whatsapp_webhook_bp)
 
-# Secondary rate limiter for AI-generation calls specifically (protects Gemini quota
-# independent of the general WhatsApp message rate limiter in whatsapp.webhook).
+# Security headers + per-request trace-id context (v4.0, additive).
+register_middleware(app)
+
+# Secondary rate limiter for AI-generation calls specifically (protects Gemini
+# quota independent of the general WhatsApp message rate limiter).
 _ai_rate_limiter = RateLimiter(max_requests=15, window_seconds=60)
 
 
@@ -67,6 +105,7 @@ def _validate_configuration() -> None:
 
 
 _validate_configuration()
+bootstrap_database()  # no-op unless USE_DATABASE=true and SQLAlchemy is installed
 
 
 # --------------------------------------------------------------------------
@@ -76,11 +115,14 @@ _validate_configuration()
 def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) -> None:
     """Route an incoming customer message to the correct handler and reply.
 
-    Args:
-        wa_number: Customer's WhatsApp number.
-        raw_text: Raw text body of the incoming message (or an internal
-            sentinel like "__RATE_LIMITED__" / "__UNSUPPORTED_TYPE__").
-        profile_name: WhatsApp profile display name, if available.
+    Order of precedence:
+        0. Internal sentinels (rate-limited / unsupported type)
+        1. Pagination ("more"/"next") when an active search exists
+        2. Greeting on a fresh conversation
+        3. Order-status lookup
+        4. Product-search intent -> live Shopify search + product cards
+        5. Explicit catalogue request -> official catalogue link
+        6. FAQ + Gemini grounded reply (existing default)
     """
     if raw_text == "__RATE_LIMITED__":
         send_text_message(
@@ -111,13 +153,9 @@ def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) ->
     language = detect_language(clean_text)
     conversation_memory.add_turn(wa_number, "user", clean_text)
 
-    # 1. Catalogue intent -> always return the verified official link
-    if faq.wants_catalogue(clean_text):
-        reply = (
-            f"Here is our official ME-HAAT Fashion catalogue: {CATALOGUE_LINK}\n"
-            "Browse all sarees and ethnic wear directly on WhatsApp!"
-        )
-        _finalize_reply(wa_number, reply, start_time)
+    # 1. Pagination — "more" / "next" while a product search is active.
+    if _is_more_request(clean_text) and conversation_memory.has_active_search(wa_number):
+        _send_next_product_page(wa_number, start_time)
         return
 
     # 2. Pure greeting on a fresh conversation -> templated greeting, no LLM call
@@ -134,7 +172,22 @@ def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) ->
         _finalize_reply(wa_number, reply, start_time)
         return
 
-    # 4. FAQ + product search grounding, then let Gemini phrase the final reply
+    # 4. Product-search intent -> live Shopify search + WhatsApp product cards.
+    if shopify_search.detect_product_search_intent(clean_text):
+        if _handle_product_search(wa_number, customer_name, language, clean_text, start_time):
+            return
+        # No products / Shopify unavailable -> fall through to catalogue fallback.
+
+    # 5. Explicit catalogue request (or the product-search fallback) -> link.
+    if faq.wants_catalogue(clean_text) or shopify_search.detect_product_search_intent(clean_text):
+        reply = (
+            f"Here is our official ME-HAAT Fashion catalogue: {CATALOGUE_LINK}\n"
+            "Browse all sarees and ethnic wear directly on WhatsApp!"
+        )
+        _finalize_reply(wa_number, reply, start_time)
+        return
+
+    # 6. FAQ + product grounding, then let Gemini phrase the final reply.
     verified_context = ""
     faq_match = faq.match_faq(clean_text)
     if faq_match:
@@ -154,6 +207,99 @@ def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) ->
     _finalize_reply(wa_number, reply, start_time)
 
 
+# --------------------------------------------------------------------------
+# Product-search handling (v4.0)
+# --------------------------------------------------------------------------
+
+def _is_more_request(text: str) -> bool:
+    """Return True if the message is a pagination request ("more" / "next")."""
+    normalized = text.strip().lower()
+    if normalized in _MORE_KEYWORDS:
+        return True
+    # Short messages like "show more please" / "aur dikhao"
+    if len(normalized.split()) <= 3:
+        return any(kw in normalized for kw in ("more", "next", "aur dikhao", "aur"))
+    return False
+
+
+def _handle_product_search(
+    wa_number: str, customer_name: str, language: str, clean_text: str, start_time: float
+) -> bool:
+    """Search Shopify and, if products exist, send cards immediately.
+
+    Returns:
+        True if product cards were sent (message fully handled), False if no
+        products were found / Shopify is unavailable (caller should fall back).
+    """
+    products = shopify_search.search_and_rank(
+        clean_text, limit=_SEARCH_FETCH_LIMIT
+    )
+    if not products:
+        logger.info("PRODUCT_SEARCH | No products for %s query=%r", wa_number, clean_text)
+        return False
+
+    cards = [p.to_card_dict() for p in products]
+
+    # Store the full ranked set so "more"/"next" can page through it, then send
+    # the first page of cards to the customer immediately.
+    conversation_memory.set_last_search(wa_number, clean_text, cards)
+    page = conversation_memory.get_next_search_page(wa_number, _PAGE_SIZE)
+    send_products(wa_number, page)
+
+    shown = len(page)
+    remaining = conversation_memory.has_active_search(wa_number)
+    note = f"[Sent {shown} product card(s)"
+    note += "; more available — reply 'more'.]" if remaining else ".]"
+    conversation_memory.add_turn(wa_number, "assistant", note)
+
+    # Optional short Gemini recommendation *after* the cards (Task 6). Disable
+    # with PRODUCT_RECO_ENABLED=false to strictly send only product cards.
+    if config.product_reco_enabled:
+        verified_context = (
+            "The customer was just shown these verified Shopify products as WhatsApp "
+            "cards (do NOT re-list prices/links; add a brief, warm 1-2 line styling or "
+            "selection tip and invite them to reply 'more' to see additional options):\n"
+            + "\n".join(p.to_context_line() for p in products[:shown])
+            + "\n"
+        )
+        reco = generate_ai_reply(wa_number, customer_name, language, verified_context, clean_text)
+        if reco and reco != FALLBACK_MESSAGE:
+            conversation_memory.add_turn(wa_number, "assistant", reco)
+            send_text_message(wa_number, reco)
+        _log_interaction(wa_number, clean_text, reco, verified_context)
+
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(
+        "PRODUCT_SEARCH | Sent %d card(s) to %s in %.2fms (more=%s)",
+        shown, wa_number, elapsed_ms, remaining,
+    )
+    return True
+
+
+def _send_next_product_page(wa_number: str, start_time: float) -> None:
+    """Send the next page of a customer's active product search."""
+    page = conversation_memory.get_next_search_page(wa_number, _PAGE_SIZE)
+    if not page:
+        reply = (
+            "That's everything I have for that search right now. "
+            f"You can browse our full catalogue here: {CATALOGUE_LINK}"
+        )
+        _finalize_reply(wa_number, reply, start_time)
+        return
+
+    send_products(wa_number, page, header="Here are a few more options 🛍️")
+    remaining = conversation_memory.has_active_search(wa_number)
+    note = f"[Sent {len(page)} more product card(s)"
+    note += "; more available — reply 'more'.]" if remaining else "; end of results.]"
+    conversation_memory.add_turn(wa_number, "assistant", note)
+
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(
+        "PRODUCT_SEARCH | Sent next page (%d cards) to %s in %.2fms (more=%s)",
+        len(page), wa_number, elapsed_ms, remaining,
+    )
+
+
 def _build_order_status_context(order_number: Optional[str], wa_number: str) -> str:
     """Build verified order-status context for the AI prompt."""
     if not order_number:
@@ -169,7 +315,11 @@ def _build_order_status_context(order_number: Optional[str], wa_number: str) -> 
 
 
 def _build_product_search_context(clean_text: str) -> str:
-    """Run a Shopify product search based on extracted filters and format context."""
+    """Run a Shopify product search based on extracted filters and format context.
+
+    Retained from v3.0 for the FAQ/Gemini grounding path (used when the message
+    is not a direct product-search intent but still mentions products).
+    """
     filters = shopify_search.extract_search_filters(clean_text)
     has_search_signal = any(v for v in filters.values())
     lowered = clean_text.lower()
@@ -230,13 +380,29 @@ def generate_ai_reply(
         )
 
     history = conversation_memory.get_history(wa_number)
-    return generate_reply(
+    reply = generate_reply(
         history=history,
         customer_name=customer_name,
         language=language,
         verified_context=verified_context,
         user_message=user_message,
     )
+    _log_interaction(wa_number, user_message, reply, verified_context)
+    return reply
+
+
+def _log_interaction(wa_number: str, user_message: str, reply: str, context: str) -> None:
+    """Best-effort persistence of an AI interaction (no-op unless USE_DATABASE)."""
+    try:
+        log_ai_interaction(
+            wa_number=wa_number,
+            user_message=user_message,
+            reply=reply,
+            context=context,
+            model=config.gemini_model,
+        )
+    except Exception as exc:  # noqa: BLE001 - logging must never break the reply path
+        logger.debug("DATABASE | log_ai_interaction skipped: %s", exc)
 
 
 init_webhook(handle_customer_message)
@@ -249,18 +415,27 @@ init_webhook(handle_customer_message)
 @app.route("/", methods=["GET"])
 @app.route("/health", methods=["GET"])
 def health_check():
-    """Simple health check endpoint for uptime monitoring and Render."""
-    return (
-        jsonify(
-            {
-                "status": "ok",
-                "service": "ME-HAAT Fashion AI Bot",
-                "version": "3.0",
-                "shops_connected": len(token_store.list_shops()),
-            }
-        ),
-        200,
-    )
+    """Health check endpoint for uptime monitoring and Render.
+
+    Backward compatible: keeps the original keys (status, service, version,
+    shops_connected) and adds richer component detail under "components".
+    """
+    report = build_health_report()
+    return jsonify(report), 200
+
+
+@app.route("/health/live", methods=["GET"])
+def health_live():
+    """Liveness probe — process is up and serving."""
+    return jsonify(liveness()), 200
+
+
+@app.route("/health/ready", methods=["GET"])
+def health_ready():
+    """Readiness probe — required configuration/dependencies are present."""
+    report = readiness()
+    status_code = 200 if report.get("ready") else 503
+    return jsonify(report), status_code
 
 
 # --------------------------------------------------------------------------

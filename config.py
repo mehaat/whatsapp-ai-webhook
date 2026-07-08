@@ -1,11 +1,15 @@
 """
 config.py
 ---------
-Central configuration for ME-HAAT Fashion AI Bot v3.0.
+Central configuration for ME-HAAT Fashion AI Bot v4.0.
 
 All environment variables are read once here and exposed as a typed
 ``Config`` object, so the rest of the codebase never calls ``os.environ``
 directly. This makes required-variable validation and testing easier.
+
+v4.0 adds several *optional* settings (WhatsApp catalog id, database, log
+format, token encryption, product recommendations). Every new setting has a
+safe default, so an existing v3.0 ``.env`` keeps working unchanged.
 """
 
 from __future__ import annotations
@@ -18,10 +22,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+APP_VERSION = "4.0"
+
 
 def _split_scopes(raw: str) -> List[str]:
     """Parse a comma-separated scopes string into a clean list."""
     return [scope.strip() for scope in raw.split(",") if scope.strip()]
+
+
+def _as_bool(raw: str, default: bool = False) -> bool:
+    """Parse a truthy environment string (1/true/yes/on) into a bool."""
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -36,10 +49,21 @@ class Config:
         default_factory=lambda: os.environ.get("WHATSAPP_API_VERSION", "v23.0")
     )
 
+    # Optional: native WhatsApp/Meta Commerce catalog id. When set, the bot
+    # attempts native Product Messages before falling back to text cards.
+    whatsapp_catalog_id: str = field(
+        default_factory=lambda: os.environ.get("WHATSAPP_CATALOG_ID", "")
+    )
+
     # --- Gemini AI ---
     gemini_api_key: str = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
     gemini_model: str = field(
         default_factory=lambda: os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    )
+    # When True, after sending product cards the bot also sends a short Gemini
+    # recommendation. Set to "false" to strictly send only cards (v3.1 Task 1).
+    product_reco_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("PRODUCT_RECO_ENABLED", "true"), True)
     )
 
     # --- Shopify OAuth (new Dev Dashboard app model) ---
@@ -74,9 +98,36 @@ class Config:
     token_store_path: str = field(
         default_factory=lambda: os.environ.get("TOKEN_STORE_PATH", "shop_tokens.json")
     )
+    # Optional Fernet key used to encrypt access tokens at rest (v4.0). When
+    # unset, tokens are stored as-is (unchanged v3.0 behaviour).
+    token_encryption_key: str = field(
+        default_factory=lambda: os.environ.get("TOKEN_ENCRYPTION_KEY", "")
+    )
+
+    # --- Database (optional, opt-in; SQLite by default, Postgres supported) ---
+    use_database: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("USE_DATABASE", "false"), False)
+    )
+    database_url: str = field(
+        default_factory=lambda: os.environ.get("DATABASE_URL", "sqlite:///mehaat.db")
+    )
+
+    # --- Observability ---
+    # "text" (default, v3.0 behaviour) or "json" (structured logs).
+    log_format: str = field(
+        default_factory=lambda: os.environ.get("LOG_FORMAT", "text").strip().lower()
+    )
+    log_level: str = field(
+        default_factory=lambda: os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+    )
 
     # --- Server ---
     port: int = field(default_factory=lambda: int(os.environ.get("PORT", "5000")))
+
+    @property
+    def version(self) -> str:
+        """Application version string."""
+        return APP_VERSION
 
     # --- Networking ---
     request_timeout_seconds: int = field(

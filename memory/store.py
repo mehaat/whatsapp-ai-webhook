@@ -38,6 +38,9 @@ class ConversationMemory:
         self._store: Dict[str, Deque[Dict[str, str]]] = {}
         self._last_seen: Dict[str, float] = {}
         self._names: Dict[str, str] = {}
+        # v4.0: per-customer product-search pagination state. Each entry is
+        # {"query": str, "products": List[dict], "offset": int}.
+        self._searches: Dict[str, Dict[str, object]] = {}
         self._lock = threading.Lock()
 
     def _expire_if_needed(self, wa_number: str) -> None:
@@ -49,6 +52,7 @@ class ConversationMemory:
             logger.info("MEMORY | Conversation expired for %s due to inactivity", wa_number)
             self._store.pop(wa_number, None)
             self._names.pop(wa_number, None)
+            self._searches.pop(wa_number, None)
 
     def add_turn(self, wa_number: str, role: str, text: str) -> None:
         """Append a conversation turn for a given WhatsApp number."""
@@ -77,6 +81,59 @@ class ConversationMemory:
         with self._lock:
             return self._names.get(wa_number, "")
 
+    # ----------------------------------------------------------------------
+    # Product-search pagination (v4.0, Task 10)
+    # ----------------------------------------------------------------------
+
+    def set_last_search(
+        self, wa_number: str, query: str, products: List[Dict[str, object]]
+    ) -> None:
+        """Record the full ranked result set for a customer's product search.
+
+        The offset is reset to ``len(products already shown)`` by the caller via
+        ``get_next_search_page``; here we simply store the whole list at offset 0.
+        """
+        with self._lock:
+            self._searches[wa_number] = {
+                "query": query,
+                "products": list(products),
+                "offset": 0,
+            }
+            self._last_seen[wa_number] = time.time()
+
+    def get_next_search_page(
+        self, wa_number: str, page_size: int = 5
+    ) -> List[Dict[str, object]]:
+        """Return the next page of products for the customer and advance state.
+
+        Returns an empty list when there is no active search or no more
+        products remain.
+        """
+        with self._lock:
+            self._expire_if_needed(wa_number)
+            state = self._searches.get(wa_number)
+            if not state:
+                return []
+            products = state["products"]  # type: ignore[index]
+            offset = int(state["offset"])  # type: ignore[arg-type]
+            page = products[offset : offset + page_size]
+            state["offset"] = offset + len(page)
+            self._last_seen[wa_number] = time.time()
+            return list(page)
+
+    def has_active_search(self, wa_number: str) -> bool:
+        """Return True if the customer has a stored search with items remaining."""
+        with self._lock:
+            state = self._searches.get(wa_number)
+            if not state:
+                return False
+            return int(state["offset"]) < len(state["products"])  # type: ignore[arg-type]
+
+    def clear_search(self, wa_number: str) -> None:
+        """Forget any stored product-search pagination state for a customer."""
+        with self._lock:
+            self._searches.pop(wa_number, None)
+
     def cleanup_expired(self) -> int:
         """Sweep all conversations and remove expired ones.
 
@@ -95,6 +152,7 @@ class ConversationMemory:
                 self._store.pop(number, None)
                 self._names.pop(number, None)
                 self._last_seen.pop(number, None)
+                self._searches.pop(number, None)
                 expired += 1
 
         if expired:

@@ -1,0 +1,3 @@
+# ME-HAAT Fashion AI Bot v4.0 — development / test dependencies
+-r requirements.txt
+pytest>=8.0.0

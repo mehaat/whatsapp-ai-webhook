@@ -1,0 +1,15 @@
+# ME-HAAT Fashion AI Bot v4.0 — runtime dependencies
+# Core (v3.0) — unchanged
+Flask==3.0.3
+gunicorn==22.0.0
+requests==2.32.3
+python-dotenv==1.0.1
+
+# v4.0 additions
+# SQLAlchemy powers the optional persistence layer (USE_DATABASE=true).
+SQLAlchemy>=2.0,<2.1
+# cryptography enables optional token encryption at rest (TOKEN_ENCRYPTION_KEY).
+cryptography>=42.0.0
+# PostgreSQL driver — only needed when DATABASE_URL points at Postgres.
+# Uncomment on deployments that use Postgres (e.g. Render Managed Postgres):
+# psycopg2-binary>=2.9.9

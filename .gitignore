@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+shop_tokens.json
+*.db
+mehaat.db
+_v4_delta.tar.gz
+.DS_Store

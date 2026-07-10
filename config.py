@@ -1,15 +1,15 @@
 """
 config.py
 ---------
-Central configuration for ME-HAAT Fashion AI Bot v4.2
+Central configuration for ME-HAAT Fashion AI Bot v5
 
 All environment variables are read once here and exposed as a typed
 ``Config`` object, so the rest of the codebase never calls ``os.environ``
 directly. This makes required-variable validation and testing easier.
 
-v4.2 adds several *optional* settings (WhatsApp catalog id, database, log
+v5 adds several *optional* settings (WhatsApp catalog id, database, log
 format, token encryption, product recommendations). Every new setting has a
-safe default, so an existing v3.0 ``.env`` keeps working unchanged.
+safe default, so an existing v4.2 ``.env`` keeps working unchanged.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_VERSION = "4.2"
+APP_VERSION = "5"
 
 
 def _split_scopes(raw: str) -> List[str]:

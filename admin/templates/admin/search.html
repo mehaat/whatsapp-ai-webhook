@@ -1,0 +1,51 @@
+{% extends "admin/base.html" %}
+{% block title %}Search{% endblock %}
+{% block heading %}Global Search{% endblock %}
+{% block content %}
+<form class="toolbar" method="GET" action="{{ url_for('admin.search_page') }}">
+  <input class="field grow" name="q" value="{{ query }}" placeholder="Search phone, name, email, message, product or order…" autofocus />
+  <button class="btn primary" type="submit"><i class="bi bi-search"></i> Search</button>
+</form>
+
+{% if not query %}
+<div class="card-surface panel"><div class="empty"><i class="bi bi-search"></i>Type a query to search across customers, messages, products and orders.</div></div>
+{% else %}
+<div class="grid-2">
+  <div class="card-surface panel">
+    <h3>Customers <span class="subtle">· {{ results.customers|length }}</span></h3>
+    <table class="tbl"><tbody>
+      {% for c in results.customers %}
+      <tr><td><a href="{{ url_for('admin.customer_detail', wa_number=c.wa_number) }}">{{ c.profile_name or c.wa_number }}</a><br><small class="mono muted">{{ c.wa_number }}</small></td><td>{{ c.email or '' }}</td></tr>
+      {% else %}<tr><td><span class="muted">No matches.</span></td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+  <div class="card-surface panel">
+    <h3>Messages <span class="subtle">· {{ results.messages|length }}</span></h3>
+    <table class="tbl"><tbody>
+      {% for m in results.messages %}
+      <tr><td><span class="pill {{ 'info' if m.direction=='in' else '' }}">{{ m.direction }}</span></td>
+        <td><a href="{{ url_for('admin.chat', wa_number=m.wa_number) }}">{{ (m.text or '')[:70] }}</a><br><small class="muted">{{ m.created_at }}</small></td></tr>
+      {% else %}<tr><td><span class="muted">No matches.</span></td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+</div>
+<div class="grid-2 mt">
+  <div class="card-surface panel">
+    <h3>Products <span class="subtle">· {{ results.products|length }}</span></h3>
+    <table class="tbl"><tbody>
+      {% for p in results.products %}
+      <tr><td>{{ p.title }}</td><td>{{ p.price or '' }}</td><td class="tabular">{{ p.times_sent }}×</td></tr>
+      {% else %}<tr><td><span class="muted">No matches.</span></td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+  <div class="card-surface panel">
+    <h3>Orders <span class="subtle">· {{ results.orders|length }}</span></h3>
+    <table class="tbl"><tbody>
+      {% for o in results.orders %}
+      <tr><td>{{ o.order_name }}</td><td>{{ o.customer_name or '' }}</td><td class="tabular">{{ o.currency }} {{ o.total_price }}</td></tr>
+      {% else %}<tr><td><span class="muted">No matches.</span></td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

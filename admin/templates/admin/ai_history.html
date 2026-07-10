@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+{% block title %}AI History{% endblock %}
+{% block heading %}AI Response History{% endblock %}
+{% block content %}
+<form class="toolbar" method="GET" action="{{ url_for('admin.ai_history') }}">
+  <input class="field grow" name="q" value="{{ request.args.get('q','') }}" placeholder="Search prompt, response or phone…" />
+  <select class="field" name="period" style="width:auto">
+    <option value="">All time</option>
+    {% for p,l in [('today',"Today"),('yesterday',"Yesterday"),('last7',"Last 7 days"),('last30',"Last 30 days")] %}
+    <option value="{{ p }}" {{ 'selected' if request.args.get('period')==p }}>{{ l }}</option>
+    {% endfor %}
+  </select>
+  <input class="field" type="date" name="start" value="{{ request.args.get('start','') }}" style="width:auto" title="Start date" />
+  <input class="field" type="date" name="end" value="{{ request.args.get('end','') }}" style="width:auto" title="End date" />
+  <label class="btn ghost" style="cursor:pointer"><input type="checkbox" name="fallback" value="1" {{ 'checked' if request.args.get('fallback')=='1' }} onchange="this.form.submit()" style="margin-right:6px">Fallback only</label>
+  <button class="btn primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
+  <a class="btn ghost" href="{{ url_for('admin.export_data', type='ai', format='xlsx', q=request.args.get('q',''), period=request.args.get('period','')) }}"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+</form>
+
+<div class="card-surface panel">
+  <table class="tbl">
+    <thead><tr><th>Time</th><th>Phone</th><th>Model</th><th>User message</th><th>Response</th><th class="tabular">Latency</th><th>Fallback</th><th>Error</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="nowrap">{{ r.created_at }}</td>
+        <td class="mono">{{ r.wa_number }}</td>
+        <td>{{ r.model or '—' }}</td>
+        <td title="{{ r.user_message }}">{{ (r.user_message or '')[:60] }}{{ '…' if (r.user_message or '')|length > 60 }}</td>
+        <td title="{{ r.response }}">{{ (r.response or '')[:80] }}{{ '…' if (r.response or '')|length > 80 }}</td>
+        <td class="tabular">{{ r.latency_ms or '—' }}{% if r.latency_ms %}ms{% endif %}</td>
+        <td>{% if r.fallback_used %}<span class="pill warn">yes</span>{% else %}<span class="pill good">no</span>{% endif %}</td>
+        <td>{% if r.error %}<span class="pill bad" title="{{ r.error }}">error</span>{% else %}—{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8"><div class="empty"><i class="bi bi-robot"></i>No AI responses recorded for this filter yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

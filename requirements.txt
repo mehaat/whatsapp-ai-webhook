@@ -13,3 +13,9 @@ cryptography>=42.0.0
 # PostgreSQL driver — only needed when DATABASE_URL points at Postgres.
 # Uncomment on deployments that use Postgres (e.g. Render Managed Postgres):
 # psycopg2-binary>=2.9.9
+
+# v4.2 additions — Admin Dashboard exports.
+# openpyxl powers Excel (.xlsx) export; reportlab powers PDF export. Both are
+# imported lazily and guarded, so CSV export still works if either is absent.
+openpyxl>=3.1.2
+reportlab>=4.0.0

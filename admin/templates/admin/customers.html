@@ -1,0 +1,35 @@
+{% extends "admin/base.html" %}
+{% block title %}Customers{% endblock %}
+{% block heading %}Customers{% endblock %}
+{% block content %}
+<form class="toolbar" method="GET" action="{{ url_for('admin.customers') }}">
+  <input class="field grow" name="q" value="{{ request.args.get('q','') }}" placeholder="Search name, phone or email…" />
+  <button class="btn primary" type="submit"><i class="bi bi-search"></i> Search</button>
+  <a class="btn ghost" href="{{ url_for('admin.export_data', type='customers', format='xlsx') }}"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+  <a class="btn ghost" href="{{ url_for('admin.export_data', type='customers', format='csv') }}"><i class="bi bi-filetype-csv"></i> CSV</a>
+</form>
+
+<div class="card-surface panel">
+  <table class="tbl">
+    <thead><tr><th>Name</th><th>Phone</th><th>Language</th><th>Email</th><th class="tabular">Messages</th><th>Last seen</th><th></th></tr></thead>
+    <tbody>
+      {% for c in customers %}
+      <tr>
+        <td>{{ c.profile_name or '—' }}</td>
+        <td class="mono">{{ c.wa_number }}</td>
+        <td>{{ c.language or '—' }}</td>
+        <td>{{ c.email or '—' }}</td>
+        <td class="tabular">{{ c.msgs }}</td>
+        <td class="nowrap">{{ c.last_seen_at }}</td>
+        <td class="flex">
+          <a class="pill info" href="{{ url_for('admin.chat', wa_number=c.wa_number) }}">Chat</a>
+          <a class="pill" href="{{ url_for('admin.customer_detail', wa_number=c.wa_number) }}">Profile</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7"><div class="empty"><i class="bi bi-people"></i>No customers yet. Data appears as WhatsApp messages arrive.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

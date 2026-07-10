@@ -1,0 +1,122 @@
+{% extends "admin/base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block heading %}Dashboard{% endblock %}
+{% block content %}
+<div class="stat-grid">
+  <div class="stat"><div class="icon bg-violet"><i class="bi bi-people"></i></div>
+    <div class="value" id="s-customers">{{ stats.total_customers }}</div><div class="label">Total Customers</div></div>
+  <div class="stat"><div class="icon bg-blue"><i class="bi bi-chat-left-text"></i></div>
+    <div class="value" id="s-today">{{ stats.todays_messages }}</div><div class="label">Today's Messages</div></div>
+  <div class="stat"><div class="icon bg-aqua"><i class="bi bi-collection"></i></div>
+    <div class="value" id="s-convos">{{ stats.total_conversations }}</div><div class="label">Total Conversations</div></div>
+  <div class="stat"><div class="icon bg-pink"><i class="bi bi-bag-heart"></i></div>
+    <div class="value" id="s-products">{{ stats.products_sent }}</div><div class="label">Products Sent</div></div>
+  <div class="stat"><div class="icon bg-amber"><i class="bi bi-robot"></i></div>
+    <div class="value" id="s-ai">{{ stats.ai_replies }}</div><div class="label">AI Replies</div></div>
+  <div class="stat"><div class="icon bg-slate"><i class="bi bi-box-seam"></i></div>
+    <div class="value" id="s-orders">{{ stats.shopify_orders }}</div><div class="label">Shopify Orders</div></div>
+</div>
+
+<div class="grid-2 mt">
+  <div class="card-surface panel">
+    <div class="between"><h3>Daily Messages <span class="subtle">· last 14 days</span></h3>
+      <div class="flex"><span class="pill info"><i class="bi bi-arrow-down-left"></i> Inbound</span>
+        <span class="pill" style="color:var(--series-2);border-color:color-mix(in srgb,var(--series-2) 40%,transparent)"><i class="bi bi-arrow-up-right"></i> Outbound</span></div>
+    </div>
+    <div class="chart-box"><canvas id="dailyChart"></canvas></div>
+  </div>
+  <div class="card-surface panel">
+    <h3>Popular Products</h3>
+    {% if popular_products %}
+    <div class="chart-box sm"><canvas id="prodChart"></canvas></div>
+    {% else %}<div class="empty"><i class="bi bi-bag"></i>No products sent yet.</div>{% endif %}
+  </div>
+</div>
+
+<div class="grid-2 mt">
+  <div class="card-surface panel">
+    <h3>Top Customers</h3>
+    <table class="tbl">
+      <thead><tr><th>Customer</th><th>Phone</th><th class="tabular">Messages</th><th></th></tr></thead>
+      <tbody>
+        {% for c in top_customers %}
+        <tr><td>{{ c.name }}</td><td class="mono">{{ c.wa_number }}</td><td class="tabular">{{ c.messages }}</td>
+          <td><a href="{{ url_for('admin.chat', wa_number=c.wa_number) }}" class="pill info">Open</a></td></tr>
+        {% else %}
+        <tr><td colspan="4"><div class="empty" style="padding:24px"><i class="bi bi-people"></i>No customers yet. Data appears as WhatsApp messages arrive.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-surface panel">
+    <h3>Quick Actions</h3>
+    <div class="flex" style="flex-wrap:wrap;gap:10px">
+      <a class="btn ghost" href="{{ url_for('admin.inbox') }}"><i class="bi bi-chat-dots"></i> Live Inbox</a>
+      <a class="btn ghost" href="{{ url_for('admin.orders') }}"><i class="bi bi-box-seam"></i> Order Lookup</a>
+      <a class="btn ghost" href="{{ url_for('admin.analytics_page') }}"><i class="bi bi-bar-chart"></i> Analytics</a>
+      <a class="btn ghost" href="{{ url_for('admin.search_page') }}"><i class="bi bi-search"></i> Search</a>
+      <a class="btn ghost" href="{{ url_for('admin.export_data', type='messages', format='xlsx') }}"><i class="bi bi-file-earmark-excel"></i> Export Messages</a>
+    </div>
+    <p class="subtle mt">Cards and charts refresh automatically every few seconds.</p>
+  </div>
+</div>
+
+<script id="daily-data" type="application/json">{{ daily|tojson }}</script>
+<script id="prod-data" type="application/json">{{ popular_products|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var A = window.MehaatAdmin;
+  var daily = JSON.parse(document.getElementById("daily-data").textContent);
+  var prods = JSON.parse(document.getElementById("prod-data").textContent);
+  var dailyChart, prodChart;
+
+  function buildDaily() {
+    var ink = A.chartInk();
+    var ctx = document.getElementById("dailyChart");
+    if (dailyChart) dailyChart.destroy();
+    dailyChart = new Chart(ctx, {
+      type: "line",
+      data: { labels: daily.labels, datasets: [
+        { label: "Inbound", data: daily.inbound, borderColor: ink.s1, backgroundColor: ink.s1 + "22", borderWidth: 2, tension: 0.3, fill: true, pointRadius: 0, pointHoverRadius: 5 },
+        { label: "Outbound", data: daily.outbound, borderColor: ink.s2, backgroundColor: ink.s2 + "22", borderWidth: 2, tension: 0.3, fill: true, pointRadius: 0, pointHoverRadius: 5 }
+      ]},
+      options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+        plugins: { legend: { display: false } },
+        scales: { x: { grid: { color: ink.grid }, ticks: { color: ink.text } },
+                  y: { beginAtZero: true, grid: { color: ink.grid }, ticks: { color: ink.text, precision: 0 } } } }
+    });
+  }
+  function buildProd() {
+    if (!prods || !prods.length) return;
+    var ink = A.chartInk();
+    var ctx = document.getElementById("prodChart");
+    if (prodChart) prodChart.destroy();
+    prodChart = new Chart(ctx, {
+      type: "bar",
+      data: { labels: prods.map(function (p) { return p.title.length > 22 ? p.title.slice(0,22)+"…" : p.title; }),
+        datasets: [{ label: "Times shown", data: prods.map(function (p) { return p.count; }),
+          backgroundColor: ink.brand, borderRadius: 6, borderSkipped: false, barThickness: 18 }] },
+      options: { indexAxis: "y", responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { beginAtZero: true, grid: { color: ink.grid }, ticks: { color: ink.text, precision: 0 } },
+                  y: { grid: { display: false }, ticks: { color: ink.text } } } }
+    });
+  }
+  buildDaily(); buildProd();
+  window.addEventListener("themechange", function () { buildDaily(); buildProd(); });
+
+  setInterval(function () {
+    A.apiGet("/admin/api/stats").then(function (s) {
+      document.getElementById("s-customers").textContent = s.total_customers;
+      document.getElementById("s-today").textContent = s.todays_messages;
+      document.getElementById("s-convos").textContent = s.total_conversations;
+      document.getElementById("s-products").textContent = s.products_sent;
+      document.getElementById("s-ai").textContent = s.ai_replies;
+      document.getElementById("s-orders").textContent = s.shopify_orders;
+    }).catch(function () {});
+  }, 7000);
+})();
+</script>
+{% endblock %}

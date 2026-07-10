@@ -1,0 +1,53 @@
+{% extends "admin/base.html" %}
+{% block title %}Order Lookup{% endblock %}
+{% block heading %}Shopify Order Lookup{% endblock %}
+{% block content %}
+<form class="toolbar" method="GET" action="{{ url_for('admin.orders') }}">
+  <input class="field grow" name="q" value="{{ query }}" placeholder="Order number (#1001), phone or email…" />
+  <select class="field" name="by" style="width:auto">
+    <option value="auto" {{ 'selected' if request.args.get('by','auto')=='auto' }}>Auto-detect</option>
+    <option value="order" {{ 'selected' if request.args.get('by')=='order' }}>Order number</option>
+    <option value="phone" {{ 'selected' if request.args.get('by')=='phone' }}>Phone</option>
+  </select>
+  <button class="btn primary" type="submit"><i class="bi bi-search"></i> Look up</button>
+</form>
+
+{% if not result.connected %}
+<div class="card-surface panel">
+  <div class="empty"><i class="bi bi-plug"></i>
+    No Shopify store is connected. Install the app via <code>/shopify/install?shop=&lt;store&gt;.myshopify.com</code> to enable live order lookup.</div>
+</div>
+{% elif query and not result.orders and not result.customer %}
+<div class="card-surface panel"><div class="empty"><i class="bi bi-box"></i>{{ result.message or 'No matching orders found.' }}</div></div>
+{% elif not query %}
+<div class="card-surface panel"><div class="empty"><i class="bi bi-search"></i>Enter an order number, phone, or email to search live Shopify data.</div></div>
+{% endif %}
+
+{% if result.customer %}
+<div class="card-surface panel mt">
+  <h3>Customer</h3>
+  <div class="flex" style="flex-wrap:wrap;gap:24px">
+    <div><div class="subtle">Name</div><strong>{{ result.customer.first_name }} {{ result.customer.last_name }}</strong></div>
+    <div><div class="subtle">Email</div>{{ result.customer.email or '—' }}</div>
+    <div><div class="subtle">Phone</div><span class="mono">{{ result.customer.phone or '—' }}</span></div>
+    <div><div class="subtle">Orders</div><span class="tabular">{{ result.customer.orders_count }}</span></div>
+  </div>
+</div>
+{% endif %}
+
+{% for o in result.orders %}
+<div class="card-surface panel mt">
+  <div class="between">
+    <h3 style="margin:0">Order {{ o.order_name }}</h3>
+    {% if o.admin_url %}<a class="btn ghost" href="{{ o.admin_url }}" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> Open in Shopify</a>{% endif %}
+  </div>
+  <div class="flex mt" style="flex-wrap:wrap;gap:10px">
+    <span class="pill {{ 'good' if o.financial_status in ['paid','partially_paid'] else 'warn' }}"><i class="bi bi-credit-card"></i> {{ o.financial_status or 'unknown' }}</span>
+    <span class="pill {{ 'good' if o.fulfillment_status == 'fulfilled' else 'info' }}"><i class="bi bi-truck"></i> {{ o.fulfillment_status }}</span>
+    <span class="pill info"><i class="bi bi-cash"></i> {{ o.currency }} {{ o.total_price }}</span>
+    <span class="pill {{ 'good' if o.tracking else 'warn' }}"><i class="bi bi-geo-alt"></i> {{ o.tracking or 'No tracking yet' }}</span>
+  </div>
+  {% if o.tracking_url %}<p class="mt"><a href="{{ o.tracking_url }}" target="_blank" rel="noopener">Track shipment <i class="bi bi-arrow-up-right"></i></a></p>{% endif %}
+</div>
+{% endfor %}
+{% endblock %}

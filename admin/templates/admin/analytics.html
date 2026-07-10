@@ -1,0 +1,91 @@
+{% extends "admin/base.html" %}
+{% block title %}Analytics{% endblock %}
+{% block heading %}Analytics{% endblock %}
+{% block content %}
+<form class="toolbar" method="GET" action="{{ url_for('admin.analytics_page') }}">
+  <select class="field" name="period" style="width:auto" onchange="this.form.submit()">
+    {% for p,l in [('',"All time"),('today',"Today"),('yesterday',"Yesterday"),('last7',"Last 7 days"),('last30',"Last 30 days")] %}
+    <option value="{{ p }}" {{ 'selected' if request.args.get('period','')==p }}>{{ l }}</option>
+    {% endfor %}
+  </select>
+  <input class="field" type="date" name="start" value="{{ request.args.get('start','') }}" style="width:auto" />
+  <input class="field" type="date" name="end" value="{{ request.args.get('end','') }}" style="width:auto" />
+  <button class="btn primary" type="submit"><i class="bi bi-funnel"></i> Apply</button>
+</form>
+
+<div class="stat-grid">
+  <div class="stat"><div class="icon bg-blue"><i class="bi bi-chat-left-text"></i></div><div class="value">{{ summary.messages }}</div><div class="label">Messages</div></div>
+  <div class="stat"><div class="icon bg-amber"><i class="bi bi-robot"></i></div><div class="value">{{ summary.ai_replies }}</div><div class="label">AI Replies</div></div>
+  <div class="stat"><div class="icon bg-aqua"><i class="bi bi-check2-circle"></i></div><div class="value">{{ summary.ai_accuracy }}%</div><div class="label">AI Accuracy</div></div>
+  <div class="stat"><div class="icon bg-violet"><i class="bi bi-stopwatch"></i></div><div class="value">{{ summary.avg_response_ms }}<small style="font-size:0.9rem"> ms</small></div><div class="label">Avg Response Time</div></div>
+  <div class="stat"><div class="icon bg-pink"><i class="bi bi-bag-heart"></i></div><div class="value">{{ summary.products_sent }}</div><div class="label">Products Sent</div></div>
+  <div class="stat"><div class="icon bg-slate"><i class="bi bi-box-seam"></i></div><div class="value">{{ summary.orders_generated }}</div><div class="label">Orders Generated</div></div>
+  <div class="stat"><div class="icon bg-blue"><i class="bi bi-people"></i></div><div class="value">{{ summary.active_customers }}</div><div class="label">Active Customers</div></div>
+  <div class="stat"><div class="icon bg-aqua"><i class="bi bi-graph-up-arrow"></i></div><div class="value">{{ summary.conversion_rate }}%</div><div class="label">Conversion Rate</div></div>
+</div>
+
+<div class="grid-2 mt">
+  <div class="card-surface panel">
+    <h3>Message Volume <span class="subtle">· last 14 days</span></h3>
+    <div class="chart-box"><canvas id="volChart"></canvas></div>
+  </div>
+  <div class="card-surface panel">
+    <h3>Top Products</h3>
+    {% if summary.popular_products %}<div class="chart-box sm"><canvas id="prodChart"></canvas></div>
+    {% else %}<div class="empty"><i class="bi bi-bag"></i>No product data yet.</div>{% endif %}
+  </div>
+</div>
+
+<div class="card-surface panel mt">
+  <h3>Top Customers</h3>
+  <table class="tbl">
+    <thead><tr><th>Customer</th><th>Phone</th><th class="tabular">Messages</th><th></th></tr></thead>
+    <tbody>
+      {% for c in summary.top_customers %}
+      <tr><td>{{ c.name }}</td><td class="mono">{{ c.wa_number }}</td><td class="tabular">{{ c.messages }}</td>
+        <td><a class="pill info" href="{{ url_for('admin.chat', wa_number=c.wa_number) }}">Open</a></td></tr>
+      {% else %}<tr><td colspan="4"><div class="empty"><i class="bi bi-people"></i>No customer activity yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script id="an-data" type="application/json">{{ summary|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var A = window.MehaatAdmin;
+  var d = JSON.parse(document.getElementById("an-data").textContent);
+  var volChart, prodChart;
+  function build() {
+    var ink = A.chartInk();
+    if (volChart) volChart.destroy();
+    volChart = new Chart(document.getElementById("volChart"), {
+      type: "bar",
+      data: { labels: d.daily.labels, datasets: [
+        { label: "Inbound", data: d.daily.inbound, backgroundColor: ink.s1, borderRadius: 5, borderSkipped: false },
+        { label: "Outbound", data: d.daily.outbound, backgroundColor: ink.s2, borderRadius: 5, borderSkipped: false } ] },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: ink.text, usePointStyle: true } } },
+        scales: { x: { stacked: false, grid: { display: false }, ticks: { color: ink.text } },
+                  y: { beginAtZero: true, grid: { color: ink.grid }, ticks: { color: ink.text, precision: 0 } } } }
+    });
+    if (d.popular_products && d.popular_products.length) {
+      if (prodChart) prodChart.destroy();
+      prodChart = new Chart(document.getElementById("prodChart"), {
+        type: "bar",
+        data: { labels: d.popular_products.map(function (p){ return p.title.length>20?p.title.slice(0,20)+"…":p.title; }),
+          datasets: [{ data: d.popular_products.map(function (p){ return p.count; }), backgroundColor: ink.brand, borderRadius: 6, barThickness: 16 }] },
+        options: { indexAxis: "y", responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { x: { beginAtZero: true, grid: { color: ink.grid }, ticks: { color: ink.text, precision: 0 } },
+                    y: { grid: { display: false }, ticks: { color: ink.text } } } }
+      });
+    }
+  }
+  build();
+  window.addEventListener("themechange", build);
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,73 @@
+{% extends "admin/base.html" %}
+{% block title %}Chat{% endblock %}
+{% block heading %}Customer Chat History{% endblock %}
+{% block content %}
+{% set cust = data.customer %}
+<div class="toolbar">
+  <a class="btn ghost" href="{{ url_for('admin.inbox') }}"><i class="bi bi-arrow-left"></i> Inbox</a>
+  <input class="field grow" id="chatSearch" placeholder="Search within this conversation…" />
+  <a class="btn ghost" href="{{ url_for('admin.customer_detail', wa_number=wa_number) }}"><i class="bi bi-person-badge"></i> Profile</a>
+  <a class="btn ghost" href="{{ url_for('admin.export_data', type='chat', wa=wa_number, format='csv') }}"><i class="bi bi-download"></i> Export CSV</a>
+  <a class="btn ghost" href="{{ url_for('admin.export_data', type='chat', wa=wa_number, format='pdf') }}"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+</div>
+
+<div class="grid-2">
+  <div class="card-surface chat-window" style="height:calc(100vh - 210px)">
+    <div class="between" style="padding:14px 18px;border-bottom:1px solid var(--border)">
+      <div class="flex">
+        <div class="pic conv" style="width:40px;height:40px;background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff;border-radius:50%;display:grid;place-items:center;font-weight:700">{{ (cust.profile_name or wa_number)[0]|upper }}</div>
+        <div><strong>{{ cust.profile_name or wa_number }}</strong><br><small class="mono muted">{{ wa_number }}</small></div>
+      </div>
+      <span class="pill {{ 'good' if data.conversation.status == 'open' else 'info' }}">{{ data.conversation.status or 'open' }}</span>
+    </div>
+    <div class="chat-scroll" id="chatScroll">
+      {% for m in data.messages %}
+      <div class="bubble {{ 'in' if m.direction == 'in' else 'out' }}" data-text="{{ (m.text or '')|lower }}">
+        {{ m.text }}
+        <span class="t">{{ m.created_at }}{% if m.language %} · {{ m.language }}{% endif %}{% if m.intent %} · {{ m.intent }}{% endif %}{% if m.latency_ms %} · {{ m.latency_ms }}ms{% endif %}</span>
+      </div>
+      {% else %}
+      <div class="empty" style="margin:auto"><i class="bi bi-chat"></i>No messages recorded yet.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card-surface panel">
+    <h3>Conversation</h3>
+    <table class="tbl">
+      <tr><th>Phone</th><td class="mono">{{ wa_number }}</td></tr>
+      <tr><th>Name</th><td>{{ cust.profile_name or '—' }}</td></tr>
+      <tr><th>Language</th><td>{{ cust.language or '—' }}</td></tr>
+      <tr><th>Messages</th><td class="tabular">{{ data.conversation.message_count or data.messages|length }}</td></tr>
+      <tr><th>Status</th><td>{{ data.conversation.status or 'open' }}</td></tr>
+      <tr><th>Last seen</th><td>{{ cust.last_seen_at or '—' }}</td></tr>
+    </table>
+    {% if data.ai_meta %}
+    <h3 class="mt">AI Response Times</h3>
+    <table class="tbl">
+      <thead><tr><th>Time</th><th class="tabular">Latency</th><th>Fallback</th></tr></thead>
+      <tbody>
+        {% for a in data.ai_meta[-8:] %}
+        <tr><td class="nowrap">{{ a.created_at[11:19] if a.created_at }}</td>
+          <td class="tabular">{{ a.latency_ms or '—' }}{% if a.latency_ms %}ms{% endif %}</td>
+          <td>{% if a.fallback_used %}<span class="pill warn">yes</span>{% else %}<span class="pill good">no</span>{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+(function () {
+  var sc = document.getElementById("chatScroll"); if (sc) sc.scrollTop = sc.scrollHeight;
+  var search = document.getElementById("chatSearch");
+  search.addEventListener("input", function () {
+    var q = search.value.trim().toLowerCase();
+    document.querySelectorAll(".bubble").forEach(function (b) {
+      b.style.display = (!q || (b.getAttribute("data-text") || "").indexOf(q) !== -1) ? "" : "none";
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,13 @@
+{% for c in conversations %}
+<a class="conv" data-wa="{{ c.wa_number }}" href="#">
+  <div class="pic">{{ (c.profile_name or c.wa_number or '?')[0]|upper }}</div>
+  <div class="meta">
+    <div class="name">{{ c.profile_name or c.wa_number }}<small>{{ c.last_message_at[11:16] if c.last_message_at }}</small></div>
+    <div class="last">{{ '↩ ' if c.last_direction == 'out' }}{{ c.last_message or '' }}
+      {% if c.unread_count and c.unread_count > 0 %}<span class="unread">{{ c.unread_count }}</span>{% endif %}
+    </div>
+  </div>
+</a>
+{% else %}
+<div class="empty"><i class="bi bi-inbox"></i>No conversations yet. Data appears as WhatsApp messages arrive.</div>
+{% endfor %}

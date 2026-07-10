@@ -1,0 +1,55 @@
+{% extends "admin/base.html" %}
+{% block title %}Customer{% endblock %}
+{% block heading %}Customer Details{% endblock %}
+{% block content %}
+{% set c = detail.customer %}
+<div class="toolbar">
+  <a class="btn ghost" href="{{ url_for('admin.customers') }}"><i class="bi bi-arrow-left"></i> Customers</a>
+  <a class="btn primary" href="{{ url_for('admin.chat', wa_number=wa_number) }}"><i class="bi bi-chat-dots"></i> Open Chat</a>
+</div>
+
+<div class="grid-2">
+  <div class="card-surface panel">
+    <div class="flex" style="gap:16px;margin-bottom:16px">
+      <div class="pic" style="width:60px;height:60px;background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:1.5rem">{{ (c.profile_name or wa_number)[0]|upper }}</div>
+      <div><h3 style="margin:0">{{ c.profile_name or 'Unknown' }}</h3><span class="mono muted">{{ wa_number }}</span></div>
+    </div>
+    <table class="tbl">
+      <tr><th>Phone</th><td class="mono">{{ wa_number }}</td></tr>
+      <tr><th>Name</th><td>{{ c.profile_name or '—' }}</td></tr>
+      <tr><th>Email</th><td>{{ c.email or '—' }}</td></tr>
+      <tr><th>Language</th><td>{{ c.language or '—' }}</td></tr>
+      <tr><th>Tags</th><td>{{ c.tags or '—' }}</td></tr>
+      <tr><th>Messages</th><td class="tabular">{{ detail.message_count }}</td></tr>
+      <tr><th>First seen</th><td>{{ c.first_seen_at or '—' }}</td></tr>
+      <tr><th>Last seen</th><td>{{ c.last_seen_at or '—' }}</td></tr>
+    </table>
+  </div>
+
+  <div class="card-surface panel">
+    <h3>Products Recommended</h3>
+    {% if detail.products_recommended %}
+    <table class="tbl">
+      <thead><tr><th>Product</th><th>Price</th><th>When</th></tr></thead>
+      <tbody>
+        {% for p in detail.products_recommended %}
+        <tr><td>{{ p.title }}</td><td>{{ p.price or '—' }}</td><td class="nowrap">{{ p.created_at[:16] if p.created_at }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty"><i class="bi bi-bag"></i>No products recommended yet.</div>{% endif %}
+
+    <h3 class="mt">Orders</h3>
+    {% if detail.orders %}
+    <table class="tbl">
+      <thead><tr><th>Order</th><th>Payment</th><th>Fulfilment</th><th>Total</th></tr></thead>
+      <tbody>
+        {% for o in detail.orders %}
+        <tr><td>{{ o.order_name }}</td><td>{{ o.financial_status or '—' }}</td><td>{{ o.fulfillment_status or '—' }}</td><td class="tabular">{{ o.currency }} {{ o.total_price }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty"><i class="bi bi-box"></i>No orders recorded for this customer.</div>{% endif %}
+  </div>
+</div>
+{% endblock %}

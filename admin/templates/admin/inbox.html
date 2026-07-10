@@ -1,0 +1,91 @@
+{% extends "admin/base.html" %}
+{% block title %}Live Inbox{% endblock %}
+{% block heading %}Live WhatsApp Inbox{% endblock %}
+{% block content %}
+<div class="toolbar">
+  <input class="field grow" id="inboxSearch" placeholder="Search name, phone or message…" />
+  <button class="btn ghost" id="unreadFilter"><i class="bi bi-envelope"></i> Unread only</button>
+  <span class="pill info" id="liveDot"><i class="bi bi-broadcast"></i> Live · 5s</span>
+  <a class="btn ghost" href="{{ url_for('admin.export_data', type='inbox', format='csv') }}"><i class="bi bi-download"></i> Export</a>
+</div>
+
+<div class="inbox-layout">
+  <div class="card-surface conv-list" id="convList">
+    {% include "admin/_conv_items.html" %}
+  </div>
+  <div class="card-surface chat-window" id="chatPane">
+    <div class="empty" style="margin:auto"><i class="bi bi-chat-square-text"></i>Select a conversation to view the full chat.</div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var A = window.MehaatAdmin;
+  var search = document.getElementById("inboxSearch");
+  var unreadBtn = document.getElementById("unreadFilter");
+  var list = document.getElementById("convList");
+  var pane = document.getElementById("chatPane");
+  var onlyUnread = false, activeWa = null, timer = null;
+
+  function convHtml(c) {
+    var initials = (c.profile_name || c.wa_number || "?").trim().charAt(0).toUpperCase();
+    var unread = c.unread_count > 0 ? '<span class="unread">' + c.unread_count + '</span>' : '';
+    return '<a class="conv' + (c.wa_number === activeWa ? ' active' : '') + '" data-wa="' + A.esc(c.wa_number) + '" href="#">' +
+      '<div class="pic">' + A.esc(initials) + '</div>' +
+      '<div class="meta"><div class="name">' + A.esc(c.profile_name || c.wa_number) +
+      '<small>' + A.timeAgo(c.last_message_at) + '</small></div>' +
+      '<div class="last">' + (c.last_direction === "out" ? '↩ ' : '') + A.esc(c.last_message || '') + unread + '</div></div></a>';
+  }
+
+  function loadList() {
+    var q = encodeURIComponent(search.value.trim());
+    A.apiGet("/admin/api/inbox?q=" + q + (onlyUnread ? "&unread=1" : "")).then(function (d) {
+      var convos = d.conversations || [];
+      if (!convos.length) { list.innerHTML = '<div class="empty"><i class="bi bi-inbox"></i>No conversations yet.</div>'; return; }
+      list.innerHTML = convos.map(convHtml).join("");
+    }).catch(function () {});
+  }
+
+  function loadChat(wa) {
+    activeWa = wa;
+    // Mark the thread read (CSRF-protected) then refresh the unread badge.
+    A.apiPost("/admin/api/read/" + encodeURIComponent(wa), {}).then(function () {
+      A.apiGet("/admin/api/notifications").then(function (n) { A.renderBadges(n.unread || 0); }).catch(function () {});
+    }).catch(function () {});
+    A.apiGet("/admin/api/chat/" + encodeURIComponent(wa)).then(function (d) {
+      var msgs = (d.messages || []).map(function (m) {
+        return '<div class="bubble ' + (m.direction === "in" ? "in" : "out") + '">' + A.esc(m.text || "") +
+          '<span class="t">' + A.fmtTime(m.created_at) + (m.language ? ' · ' + A.esc(m.language) : '') + '</span></div>';
+      }).join("");
+      var name = (d.customer && d.customer.profile_name) || wa;
+      pane.innerHTML =
+        '<div class="between" style="padding:14px 18px;border-bottom:1px solid var(--border)">' +
+          '<div class="flex"><div class="conv"><div class="pic" style="width:38px;height:38px">' + A.esc(name.charAt(0).toUpperCase()) + '</div></div>' +
+          '<div><strong>' + A.esc(name) + '</strong><br><small class="mono muted">' + A.esc(wa) + '</small></div></div>' +
+          '<a class="btn ghost" href="/admin/chat/' + encodeURIComponent(wa) + '"><i class="bi bi-arrows-fullscreen"></i> Full view</a>' +
+        '</div>' +
+        '<div class="chat-scroll" id="chatScroll">' + (msgs || '<div class="empty">No messages.</div>') + '</div>';
+      var sc = document.getElementById("chatScroll"); if (sc) sc.scrollTop = sc.scrollHeight;
+    }).catch(function () {});
+  }
+
+  list.addEventListener("click", function (e) {
+    var a = e.target.closest(".conv"); if (!a) return;
+    e.preventDefault();
+    document.querySelectorAll(".conv").forEach(function (n) { n.classList.remove("active"); });
+    a.classList.add("active");
+    loadChat(a.getAttribute("data-wa"));
+  });
+
+  var debounce;
+  search.addEventListener("input", function () { clearTimeout(debounce); debounce = setTimeout(loadList, 250); });
+  unreadBtn.addEventListener("click", function () {
+    onlyUnread = !onlyUnread; unreadBtn.classList.toggle("primary", onlyUnread); loadList();
+  });
+
+  loadList();
+  timer = setInterval(function () { loadList(); if (activeWa) loadChat(activeWa); }, 5000);
+})();
+</script>
+{% endblock %}

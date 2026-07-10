@@ -54,3 +54,20 @@ services:
       # Optional Fernet key to encrypt Shopify tokens at rest (blank -> plaintext).
       - key: TOKEN_ENCRYPTION_KEY
         sync: false
+      # --- v4.2 Admin Dashboard (login-protected console at /admin) ---
+      # Admin login credentials (set real values in the Render dashboard).
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      # Optional Werkzeug hash (takes precedence over ADMIN_PASSWORD when set).
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      # Stable session-signing secret (recommended). Generate a random value.
+      - key: ADMIN_SECRET_KEY
+        sync: false
+      # Dashboard SQLite lives on the mounted persistent disk by default.
+      - key: ADMIN_DB_PATH
+        value: /var/data/mehaat_admin.db
+      - key: ADMIN_SESSION_TIMEOUT_MIN
+        value: "60"

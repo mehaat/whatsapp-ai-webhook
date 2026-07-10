@@ -1,4 +1,4 @@
-"""Shopify OAuth authentication module for ME-HAAT Fashion AI Bot v4.0.
+"""Shopify OAuth authentication module for ME-HAAT Fashion AI Bot v5.
 
 This module provides a self-contained Flask blueprint that implements the
 complete Shopify OAuth 2.0 authorization-code grant, including install
@@ -16,6 +16,26 @@ a process-wide, thread-safe :class:`TokenStore` singleton whose API
 elsewhere in the codebase and therefore must remain stable.
 
 No other file in the project needs to change for this module to work.
+
+v5 production patch — persistence
+---------------------------------
+Earlier revisions kept the OAuth ``state`` and the per-shop access tokens in
+process memory.  Under Gunicorn with more than one worker this breaks the OAuth
+flow: the worker that issues the ``state`` on ``/shopify/install`` is usually
+not the worker that receives ``/shopify/callback``, so the callback worker has
+no record of the state and rejects the request with "Invalid or expired OAuth
+state".  In-memory tokens also vanish on every restart/deploy.
+
+This patch replaces **only the storage implementation** with a durable SQLite
+backend (Python standard-library ``sqlite3`` — no new dependency).  Both the
+state store and the token store now persist to a single SQLite database that is
+shared by every worker process and survives restarts, deploys and Render
+container recycles.  WAL journalling plus a busy timeout make concurrent access
+from 1, 2 or 8 workers safe, and ``state`` consumption is a single atomic
+``DELETE ... RETURNING`` statement so replay is impossible even across workers.
+
+The public classes, functions, constants, singletons and routes are unchanged;
+their behaviour is identical from the caller's perspective.
 """
 
 from __future__ import annotations
@@ -25,6 +45,7 @@ import hmac
 import json
 import os
 import secrets
+import sqlite3
 import threading
 import time
 import urllib.error
@@ -84,6 +105,14 @@ TOKEN_EXCHANGE_TIMEOUT_SECONDS: int = 15
 #: Query parameters that are excluded from the HMAC digest computation, as
 #: mandated by the Shopify OAuth specification.
 HMAC_EXCLUDED_PARAMS: Tuple[str, ...] = ("hmac", "signature")
+
+#: Fallback SQLite database location used when ``DATABASE_URL`` is absent or is
+#: not a SQLite URL.  On Render this path lives on the mounted persistent disk.
+DEFAULT_SQLITE_PATH: str = "/var/data/mehaat.db"
+
+#: SQLite busy timeout (milliseconds) applied to every connection so concurrent
+#: workers wait for a lock instead of failing immediately.
+SQLITE_BUSY_TIMEOUT_MS: int = 30000
 
 
 # --------------------------------------------------------------------------- #
@@ -145,6 +174,183 @@ def _get_redirect_uri() -> Optional[str]:
     if not app_url:
         return None
     return f"{app_url}{BLUEPRINT_URL_PREFIX}/callback"
+
+
+# --------------------------------------------------------------------------- #
+# SQLite persistence layer (shared by the state store and the token store)
+# --------------------------------------------------------------------------- #
+# A single connection-per-operation model is used because ``sqlite3`` objects
+# are not safe to share between threads.  Opening a connection is cheap for
+# SQLite, and WAL journalling lets many readers run concurrently with a single
+# writer.  A process-local lock serialises writers within a worker; SQLite's
+# own file locking (plus the busy timeout) serialises writers across workers.
+_DB_PATH_LOCK: threading.Lock = threading.Lock()
+_WRITE_LOCK: threading.Lock = threading.Lock()
+_RESOLVED_DB_PATH: Optional[str] = None
+_SCHEMA_READY: bool = False
+
+
+def _sqlite_path_from_database_url(database_url: Optional[str]) -> Optional[str]:
+    """Extract a filesystem path from a ``sqlite://`` URL.
+
+    Understands the SQLAlchemy-style conventions used elsewhere in the project:
+
+        * ``sqlite:///relative.db``       -> ``relative.db`` (relative to cwd)
+        * ``sqlite:////var/data/x.db``    -> ``/var/data/x.db`` (absolute)
+        * ``sqlite://``                   -> ``None`` (no usable path)
+
+    Non-SQLite URLs (e.g. PostgreSQL) return ``None`` so the caller falls back
+    to the default SQLite path.
+
+    Args:
+        database_url: The raw ``DATABASE_URL`` value, or ``None``.
+
+    Returns:
+        A filesystem path, or ``None`` when the URL is not a usable SQLite URL.
+    """
+    if not database_url:
+        return None
+    url = database_url.strip()
+    lowered = url.lower()
+    if not lowered.startswith("sqlite:"):
+        return None
+
+    # Strip the scheme and the (always empty) authority component.
+    remainder = url[len("sqlite://"):] if lowered.startswith("sqlite://") else url[len("sqlite:"):]
+    if not remainder:
+        return None
+    # SQLAlchemy treats the first slash after the empty authority as a
+    # separator: three slashes => relative path, four slashes => absolute.
+    path = remainder[1:] if remainder.startswith("/") else remainder
+    if not path or path == ":memory:":
+        return None
+    return path
+
+
+def _candidate_db_paths() -> List[str]:
+    """Return candidate database paths in priority order.
+
+    Priority:
+        1. A SQLite path parsed from ``DATABASE_URL`` (reused when available).
+        2. The default ``/var/data/mehaat.db`` (Render persistent disk).
+        3. The directory of ``TOKEN_STORE_PATH`` (already mounted on Render).
+        4. A local ``mehaat.db`` in the working directory (dev/tests fallback).
+    """
+    candidates: List[str] = []
+    from_url = _sqlite_path_from_database_url(os.environ.get("DATABASE_URL"))
+    if from_url:
+        candidates.append(from_url)
+    candidates.append(DEFAULT_SQLITE_PATH)
+    token_store_path = _get_env("TOKEN_STORE_PATH")
+    if token_store_path:
+        directory = os.path.dirname(token_store_path) or "."
+        candidates.append(os.path.join(directory, "mehaat.db"))
+    candidates.append(os.path.join(os.getcwd(), "mehaat.db"))
+    # De-duplicate while preserving order.
+    seen: set = set()
+    unique: List[str] = []
+    for path in candidates:
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return unique
+
+
+def _resolve_db_path() -> str:
+    """Resolve (once) and return a writable SQLite database path.
+
+    The first candidate whose parent directory can be created/written is chosen.
+    The result is cached for the lifetime of the process.
+    """
+    global _RESOLVED_DB_PATH
+    if _RESOLVED_DB_PATH is not None:
+        return _RESOLVED_DB_PATH
+
+    with _DB_PATH_LOCK:
+        if _RESOLVED_DB_PATH is not None:
+            return _RESOLVED_DB_PATH
+
+        last_error: Optional[Exception] = None
+        for candidate in _candidate_db_paths():
+            try:
+                directory = os.path.dirname(candidate)
+                if directory:
+                    os.makedirs(directory, exist_ok=True)
+                # Probe writability by opening (and closing) a connection.
+                probe = sqlite3.connect(candidate, timeout=5.0)
+                probe.execute("PRAGMA journal_mode=WAL;")
+                probe.close()
+                _RESOLVED_DB_PATH = candidate
+                logger.info("OAUTH_DB | Using SQLite persistence at %s", candidate)
+                return _RESOLVED_DB_PATH
+            except Exception as exc:  # noqa: BLE001 - try the next candidate
+                last_error = exc
+                logger.debug("OAUTH_DB | Path %s unusable: %s", candidate, exc)
+
+        # As an absolute last resort, use an in-memory-per-process path so the
+        # application still starts (single-worker/dev only).  This should never
+        # be reached on Render because /var/data is mounted and writable.
+        fallback = os.path.join(os.getcwd(), "mehaat_oauth_fallback.db")
+        logger.error(
+            "OAUTH_DB | No preferred SQLite path was writable (%s); "
+            "falling back to %s",
+            last_error,
+            fallback,
+        )
+        _RESOLVED_DB_PATH = fallback
+        return _RESOLVED_DB_PATH
+
+
+def _connect() -> sqlite3.Connection:
+    """Open a configured SQLite connection (row access by column name)."""
+    conn = sqlite3.connect(_resolve_db_path(), timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS};")
+    conn.execute("PRAGMA foreign_keys=ON;")
+    return conn
+
+
+_SCHEMA_SQL: str = """
+CREATE TABLE IF NOT EXISTS oauth_states (
+    state       TEXT PRIMARY KEY,
+    shop        TEXT NOT NULL,
+    created_at  REAL NOT NULL,
+    expires_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
+
+CREATE TABLE IF NOT EXISTS shop_tokens (
+    shop         TEXT PRIMARY KEY,
+    access_token TEXT NOT NULL,
+    installed_at REAL NOT NULL,
+    updated_at   REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shop_tokens_installed ON shop_tokens(installed_at);
+"""
+
+
+def _ensure_schema() -> None:
+    """Create the OAuth tables if they do not yet exist (idempotent, once)."""
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
+    with _WRITE_LOCK:
+        if _SCHEMA_READY:
+            return
+        try:
+            conn = _connect()
+            try:
+                conn.executescript(_SCHEMA_SQL)
+                conn.commit()
+            finally:
+                conn.close()
+            _SCHEMA_READY = True
+        except Exception as exc:  # noqa: BLE001
+            # Mark ready to avoid hammering a broken path; operations will still
+            # surface their own errors and are individually guarded.
+            _SCHEMA_READY = True
+            logger.error("OAUTH_DB | Schema initialisation failed: %s", exc)
 
 
 # --------------------------------------------------------------------------- #
@@ -256,15 +462,22 @@ def verify_hmac(params: Dict[str, str], secret: Optional[str]) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# State management (CSRF / replay protection)
+# State management (CSRF / replay protection) — SQLite backed
 # --------------------------------------------------------------------------- #
 class StateManager:
-    """Thread-safe issuer and validator of one-time OAuth ``state`` tokens.
+    """Persistent issuer and validator of one-time OAuth ``state`` tokens.
 
     Each issued state is bound to the shop it was created for and carries a
-    creation timestamp.  Validation is single-use: a state is consumed on
-    successful verification, which — combined with the TTL expiry — defends
-    against cross-site request forgery and replay of the OAuth callback.
+    creation timestamp and an absolute expiry.  Validation is single-use: a
+    state is deleted atomically on lookup, which — combined with the TTL expiry
+    — defends against cross-site request forgery and replay of the OAuth
+    callback.
+
+    State is stored in the ``oauth_states`` SQLite table, so it is shared across
+    every Gunicorn worker and survives restarts, deploys and Render container
+    recycles.  This is the fix for the multi-worker "Invalid or expired OAuth
+    state" failure: the worker that issues a state and the worker that consumes
+    it on the callback read and write the same durable table.
     """
 
     def __init__(self, ttl_seconds: int = STATE_TTL_SECONDS) -> None:
@@ -273,83 +486,142 @@ class StateManager:
         Args:
             ttl_seconds: Number of seconds an issued state remains valid.
         """
-        self._ttl_seconds: int = ttl_seconds
-        self._lock: threading.Lock = threading.Lock()
-        self._states: Dict[str, Dict[str, Any]] = {}
+        self._ttl_seconds: int = int(ttl_seconds)
 
     def issue(self, shop: str) -> str:
-        """Generate, store and return a fresh state token for ``shop``.
+        """Generate, persist and return a fresh state token for ``shop``.
 
         Args:
             shop: The validated shop domain the state is bound to.
 
         Returns:
             A cryptographically secure, URL-safe state token.
+
+        Raises:
+            ValueError: If ``shop`` is empty.
         """
+        if not shop:
+            raise ValueError("'shop' is required to issue an OAuth state")
+
+        _ensure_schema()
         token = secrets.token_urlsafe(STATE_TOKEN_BYTES)
-        with self._lock:
-            self._purge_expired_locked()
-            self._states[token] = {"shop": shop, "created_at": time.time()}
+        now = time.time()
+        expires_at = now + self._ttl_seconds
+
+        with _WRITE_LOCK:
+            conn = _connect()
+            try:
+                # Opportunistically clear expired rows so the table stays small.
+                conn.execute("DELETE FROM oauth_states WHERE expires_at < ?", (now,))
+                conn.execute(
+                    "INSERT OR REPLACE INTO oauth_states "
+                    "(state, shop, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                    (token, shop, now, expires_at),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        logger.info("STATE_CREATED | shop=%s ttl=%ss", shop, self._ttl_seconds)
         return token
 
     def consume(self, token: Optional[str], shop: str) -> bool:
         """Validate and single-use consume a state token.
+
+        The row is deleted atomically on lookup (``DELETE ... RETURNING``) so a
+        given state can be used at most once, even if two workers race on the
+        same callback.  Expiry and shop binding are then verified in constant
+        time.
 
         Args:
             token: The state value returned by Shopify on the callback.
             shop: The shop domain the callback claims to be for.
 
         Returns:
-            ``True`` when the token exists, is unexpired and matches ``shop``.
+            ``True`` when the token existed, was unexpired and matched ``shop``.
             The token is removed regardless of the outcome when it is found.
         """
-        if not token:
+        if not token or not shop:
             return False
 
-        with self._lock:
-            self._purge_expired_locked()
-            record = self._states.pop(token, None)
+        _ensure_schema()
+        with _WRITE_LOCK:
+            conn = _connect()
+            try:
+                row = conn.execute(
+                    "DELETE FROM oauth_states WHERE state = ? "
+                    "RETURNING shop, expires_at",
+                    (token,),
+                ).fetchone()
+                conn.commit()
+            finally:
+                conn.close()
 
-        if record is None:
+        if row is None:
+            logger.warning("STATE_INVALID | shop=%s (unknown or already used)", shop)
             return False
 
-        if time.time() - record["created_at"] > self._ttl_seconds:
+        stored_shop = str(row["shop"])
+        expires_at = float(row["expires_at"])
+
+        if time.time() > expires_at:
+            logger.warning("STATE_EXPIRED | shop=%s", shop)
             return False
 
-        return secrets.compare_digest(str(record["shop"]), str(shop))
+        if not secrets.compare_digest(stored_shop, str(shop)):
+            logger.warning(
+                "STATE_MISMATCH | expected=%s got=%s", stored_shop, shop
+            )
+            return False
 
-    def _purge_expired_locked(self) -> None:
-        """Drop expired states.  Caller must already hold ``self._lock``."""
+        logger.info("STATE_VALIDATED | shop=%s", shop)
+        return True
+
+    def cleanup(self) -> int:
+        """Delete all expired state rows.
+
+        Returns:
+            The number of expired states removed.
+        """
+        _ensure_schema()
         now = time.time()
-        expired = [
-            token
-            for token, record in self._states.items()
-            if now - record["created_at"] > self._ttl_seconds
-        ]
-        for token in expired:
-            self._states.pop(token, None)
+        with _WRITE_LOCK:
+            conn = _connect()
+            try:
+                cursor = conn.execute(
+                    "DELETE FROM oauth_states WHERE expires_at < ?", (now,)
+                )
+                removed = cursor.rowcount if cursor.rowcount is not None else 0
+                conn.commit()
+            finally:
+                conn.close()
+        if removed:
+            logger.info("STATE_CLEANUP | removed=%d expired state(s)", removed)
+        return int(removed)
 
 
 # --------------------------------------------------------------------------- #
-# Token store
+# Token store — SQLite backed
 # --------------------------------------------------------------------------- #
 class TokenStore:
-    """Thread-safe in-memory store of per-shop Shopify access tokens.
+    """Persistent store of per-shop Shopify access tokens.
 
-    The store preserves installation order so that :meth:`get_default_shop`
-    can deterministically resolve the "first installed" shop.  All mutating and
-    reading operations are guarded by a single lock to eliminate race
-    conditions under Flask's threaded request handling.
+    Tokens are stored in the ``shop_tokens`` SQLite table so installations
+    survive restarts and deploys and are visible to every Gunicorn worker.  The
+    installation order is preserved (via ``installed_at``) so that
+    :meth:`get_default_shop` deterministically resolves the "first installed"
+    shop, exactly as the previous in-memory implementation did.
 
-    This class is the sole intentional piece of shared mutable state in the
-    module and its public API is relied upon by other project modules.
+    The public API is unchanged and is relied upon by other project modules
+    (``shopify.client``, ``shopify.search``, ``utils.health``, the admin
+    dashboard).  Both :meth:`get` and :meth:`get_token` are provided as they are
+    both used across the codebase.
     """
 
     def __init__(self) -> None:
-        """Initialise an empty, lock-protected token store."""
-        self._lock: threading.Lock = threading.Lock()
-        self._tokens: Dict[str, str] = {}
-        self._order: List[str] = []
+        """Initialise the token store (schema is created lazily on first use)."""
+        # No in-memory state: the SQLite table is the single source of truth.
+        return None
 
     def save(self, shop: str, token: str) -> None:
         """Persist (or update) the access token for a shop.
@@ -364,10 +636,31 @@ class TokenStore:
         if not shop or not token:
             raise ValueError("Both 'shop' and 'token' are required to save a token")
 
-        with self._lock:
-            if shop not in self._tokens:
-                self._order.append(shop)
-            self._tokens[shop] = token
+        _ensure_schema()
+        now = time.time()
+        with _WRITE_LOCK:
+            conn = _connect()
+            try:
+                existed = conn.execute(
+                    "SELECT 1 FROM shop_tokens WHERE shop = ?", (shop,)
+                ).fetchone()
+                conn.execute(
+                    "INSERT INTO shop_tokens (shop, access_token, installed_at, "
+                    "updated_at) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(shop) DO UPDATE SET "
+                    "access_token = excluded.access_token, "
+                    "updated_at = excluded.updated_at",
+                    (shop, token, now, now),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        if existed:
+            logger.info("TOKEN_SAVED | shop=%s (updated)", shop)
+        else:
+            logger.info("TOKEN_SAVED | shop=%s", shop)
+            logger.info("SHOP_INSTALLED | shop=%s", shop)
 
     def get(self, shop: str) -> Optional[str]:
         """Return the stored token for ``shop`` or ``None`` if absent.
@@ -378,8 +671,31 @@ class TokenStore:
         Returns:
             The access token when present, otherwise ``None``.
         """
-        with self._lock:
-            return self._tokens.get(shop)
+        if not shop:
+            return None
+        _ensure_schema()
+        conn = _connect()
+        try:
+            row = conn.execute(
+                "SELECT access_token FROM shop_tokens WHERE shop = ?", (shop,)
+            ).fetchone()
+        finally:
+            conn.close()
+        return row["access_token"] if row else None
+
+    def get_token(self, shop: str) -> Optional[str]:
+        """Return the stored token for ``shop`` (alias of :meth:`get`).
+
+        Provided because :mod:`shopify.client` and :mod:`shopify.search` resolve
+        tokens via ``token_store.get_token(shop)``.
+
+        Args:
+            shop: The shop domain to look up.
+
+        Returns:
+            The access token when present, otherwise ``None``.
+        """
+        return self.get(shop)
 
     def remove(self, shop: str) -> bool:
         """Remove any stored token for ``shop``.
@@ -390,12 +706,22 @@ class TokenStore:
         Returns:
             ``True`` when a token was removed, ``False`` when none existed.
         """
-        with self._lock:
-            existed = shop in self._tokens
-            self._tokens.pop(shop, None)
-            if shop in self._order:
-                self._order.remove(shop)
-            return existed
+        if not shop:
+            return False
+        _ensure_schema()
+        with _WRITE_LOCK:
+            conn = _connect()
+            try:
+                cursor = conn.execute(
+                    "DELETE FROM shop_tokens WHERE shop = ?", (shop,)
+                )
+                removed = (cursor.rowcount or 0) > 0
+                conn.commit()
+            finally:
+                conn.close()
+        if removed:
+            logger.info("SHOP_REMOVED | shop=%s", shop)
+        return removed
 
     def exists(self, shop: str) -> bool:
         """Return whether a token is stored for ``shop``.
@@ -406,8 +732,17 @@ class TokenStore:
         Returns:
             ``True`` when a token exists for the shop.
         """
-        with self._lock:
-            return shop in self._tokens
+        if not shop:
+            return False
+        _ensure_schema()
+        conn = _connect()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM shop_tokens WHERE shop = ?", (shop,)
+            ).fetchone()
+        finally:
+            conn.close()
+        return row is not None
 
     def list_shops(self) -> List[str]:
         """Return installed shops in installation order.
@@ -415,8 +750,15 @@ class TokenStore:
         Returns:
             A new list of shop domains; safe for the caller to mutate.
         """
-        with self._lock:
-            return list(self._order)
+        _ensure_schema()
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                "SELECT shop FROM shop_tokens ORDER BY installed_at ASC, rowid ASC"
+            ).fetchall()
+        finally:
+            conn.close()
+        return [row["shop"] for row in rows]
 
     def get_default_shop(self) -> Optional[str]:
         """Resolve the default shop for the application.
@@ -430,17 +772,17 @@ class TokenStore:
         Returns:
             The resolved default shop domain, or ``None``.
         """
-        with self._lock:
-            if not self._order:
-                return None
+        shops = self.list_shops()
+        if not shops:
+            return None
 
-            configured = _get_configured_default_shop()
-            if configured:
-                configured = configured.strip().lower()
-                if configured in self._tokens:
-                    return configured
+        configured = _get_configured_default_shop()
+        if configured:
+            configured = configured.strip().lower()
+            if configured in shops:
+                return configured
 
-            return self._order[0]
+        return shops[0]
 
     def shop_count(self) -> int:
         """Return the number of installed shops.
@@ -448,12 +790,17 @@ class TokenStore:
         Returns:
             The count of shops with a stored token.
         """
-        with self._lock:
-            return len(self._order)
+        _ensure_schema()
+        conn = _connect()
+        try:
+            row = conn.execute("SELECT COUNT(*) AS c FROM shop_tokens").fetchone()
+        finally:
+            conn.close()
+        return int(row["c"]) if row else 0
 
 
 # --------------------------------------------------------------------------- #
-# Module-level singletons (the only shared mutable state)
+# Module-level singletons (durable, shared across workers via SQLite)
 # --------------------------------------------------------------------------- #
 token_store: TokenStore = TokenStore()
 _state_manager: StateManager = StateManager()
@@ -646,12 +993,12 @@ def shopify_install() -> Response:
             logger.error("Shopify OAuth failure: application is not configured")
             return _json_error("Shopify integration is not configured", 500)
 
-        logger.info("Shopify OAuth started for shop %s", shop)
+        logger.info("OAUTH_INSTALL | shop=%s", shop)
 
         state = _state_manager.issue(shop)
         authorize_url = build_authorization_url(shop, state)
 
-        logger.info("Redirecting shop %s to Shopify authorization", shop)
+        logger.info("OAUTH_INSTALL | redirecting shop=%s to Shopify authorize", shop)
         return redirect(authorize_url, code=302)
 
     except RuntimeError as exc:
@@ -682,6 +1029,8 @@ def shopify_callback() -> Response:
             logger.warning("Shopify OAuth failure: invalid shop on callback")
             return _json_error("A valid 'shop' parameter is required", 400)
 
+        logger.info("OAUTH_CALLBACK | shop=%s", shop)
+
         code = params.get("code")
         if not code:
             logger.warning("Shopify OAuth failure: missing code for %s", shop)
@@ -698,9 +1047,7 @@ def shopify_callback() -> Response:
         access_token = exchange_code_for_token(shop, code)
 
         token_store.save(shop, access_token)
-        logger.info("Token stored for shop %s", shop)
-        logger.info("Shop installed: %s", shop)
-        logger.info("Shopify OAuth success for shop %s", shop)
+        logger.info("OAUTH_CALLBACK | success shop=%s", shop)
 
         return _json_success(
             status_code=200,

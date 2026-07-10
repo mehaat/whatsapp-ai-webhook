@@ -50,6 +50,27 @@ from utils.security import contains_injection_attempt, sanitize_input
 from whatsapp.sender import send_products, send_text_message
 from whatsapp.webhook import init_webhook, whatsapp_webhook_bp
 
+# Admin dashboard (additive module). The import is guarded so that, exactly like
+# the optional database layer, a problem inside the dashboard can never prevent
+# the core WhatsApp / Shopify / Gemini application from starting.
+try:
+    from admin import init_admin
+    from admin import tracker as admin_tracker
+except Exception as exc:  # noqa: BLE001 - dashboard must never break startup
+    logger.error("ADMIN | Dashboard unavailable, continuing without it: %s", exc)
+
+    def init_admin(_app) -> None:  # type: ignore[misc]
+        return None
+
+    class _NoopTracker:
+        def __getattr__(self, _name):
+            def _noop(*_args, **_kwargs):
+                return None
+
+            return _noop
+
+    admin_tracker = _NoopTracker()  # type: ignore[assignment]
+
 # Optional persistence layer. Import is guarded so a missing SQLAlchemy install
 # or an unconfigured database can never prevent the app from starting.
 try:
@@ -82,6 +103,10 @@ app.register_blueprint(whatsapp_webhook_bp)
 
 # Security headers + per-request trace-id context (v4.0, additive).
 register_middleware(app)
+
+# Login-protected Admin Dashboard at /admin (v4.2, additive). Registers its own
+# blueprint + session config; does not touch any existing route or behaviour.
+init_admin(app)
 
 # Secondary rate limiter for AI-generation calls specifically (protects Gemini
 # quota independent of the general WhatsApp message rate limiter).
@@ -152,6 +177,9 @@ def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) ->
 
     language = detect_language(clean_text)
     conversation_memory.add_turn(wa_number, "user", clean_text)
+
+    # Admin dashboard: record the inbound customer message (best-effort, guarded).
+    admin_tracker.record_inbound(wa_number, clean_text, profile_name, language)
 
     # 1. Pagination — "more" / "next" while a product search is active.
     if _is_more_request(clean_text) and conversation_memory.has_active_search(wa_number):
@@ -246,6 +274,9 @@ def _handle_product_search(
     page = conversation_memory.get_next_search_page(wa_number, _PAGE_SIZE)
     send_products(wa_number, page)
 
+    # Admin dashboard: record which products were shown (best-effort, guarded).
+    admin_tracker.record_products_sent(wa_number, clean_text, page)
+
     shown = len(page)
     remaining = conversation_memory.has_active_search(wa_number)
     note = f"[Sent {shown} product card(s)"
@@ -288,6 +319,7 @@ def _send_next_product_page(wa_number: str, start_time: float) -> None:
         return
 
     send_products(wa_number, page, header="Here are a few more options 🛍️")
+    admin_tracker.record_products_sent(wa_number, "(more)", page)
     remaining = conversation_memory.has_active_search(wa_number)
     note = f"[Sent {len(page)} more product card(s)"
     note += "; more available — reply 'more'.]" if remaining else "; end of results.]"
@@ -367,6 +399,9 @@ def _finalize_reply(wa_number: str, reply: str, start_time: float) -> None:
     elapsed_ms = (time.perf_counter() - start_time) * 1000
     logger.info("MESSAGE | Handled for %s in %.2fms", wa_number, elapsed_ms)
 
+    # Admin dashboard: record the outbound bot reply (best-effort, guarded).
+    admin_tracker.record_outbound(wa_number, reply, latency_ms=int(elapsed_ms))
+
 
 def generate_ai_reply(
     wa_number: str, customer_name: str, language: str, verified_context: str, user_message: str
@@ -380,6 +415,7 @@ def generate_ai_reply(
         )
 
     history = conversation_memory.get_history(wa_number)
+    _ai_start = time.perf_counter()
     reply = generate_reply(
         history=history,
         customer_name=customer_name,
@@ -387,7 +423,19 @@ def generate_ai_reply(
         verified_context=verified_context,
         user_message=user_message,
     )
+    _ai_latency_ms = int((time.perf_counter() - _ai_start) * 1000)
     _log_interaction(wa_number, user_message, reply, verified_context)
+
+    # Admin dashboard: record the Gemini generation for the AI-history view.
+    admin_tracker.record_ai(
+        wa_number,
+        user_message,
+        reply,
+        model=config.gemini_model,
+        prompt_context=verified_context,
+        latency_ms=_ai_latency_ms,
+        fallback_used=(reply == FALLBACK_MESSAGE or not reply),
+    )
     return reply
 
 

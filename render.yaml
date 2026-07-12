@@ -30,6 +30,9 @@ services:
         value: "read_products,read_orders,read_inventory,read_customers,write_draft_orders"
       - key: SHOPIFY_WEBHOOK_SECRET
         sync: false
+      # Meta App Secret — verifies inbound webhook signatures (recommended).
+      - key: WHATSAPP_APP_SECRET
+        sync: false
       - key: TOKEN_STORE_PATH
         value: /var/data/shop_tokens.json
       - key: PYTHON_VERSION

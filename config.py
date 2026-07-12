@@ -1,7 +1,7 @@
 """
 config.py
 ---------
-Central configuration for ME-HAAT Fashion AI Bot v5
+Central configuration for ME-HAAT Fashion AI Bot v5.1 Production Edition
 
 All environment variables are read once here and exposed as a typed
 ``Config`` object, so the rest of the codebase never calls ``os.environ``
@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_VERSION = "5"
+APP_VERSION = "5.1"
 
 
 def _split_scopes(raw: str) -> List[str]:
@@ -53,6 +53,14 @@ class Config:
     # attempts native Product Messages before falling back to text cards.
     whatsapp_catalog_id: str = field(
         default_factory=lambda: os.environ.get("WHATSAPP_CATALOG_ID", "")
+    )
+
+    # Optional (v5.1): Meta App Secret used to verify the X-Hub-Signature-256
+    # header on inbound webhook POSTs. When set, unsigned/forged webhook calls
+    # are rejected with 403. When unset, verification is skipped (a warning is
+    # logged) so existing deployments keep working unchanged.
+    whatsapp_app_secret: str = field(
+        default_factory=lambda: os.environ.get("WHATSAPP_APP_SECRET", "")
     )
 
     # --- Gemini AI ---
@@ -91,7 +99,10 @@ class Config:
     # Optional: for single-store deployments that want to pin a default shop
     # (e.g. the merchant has already installed the app once).
     default_shop_domain: str = field(
-        default_factory=lambda: os.environ.get("DEFAULT_SHOP_DOMAIN", "")
+        default_factory=lambda: (
+            os.environ.get("DEFAULT_SHOP_DOMAIN")
+            or os.environ.get("SHOPIFY_DEFAULT_SHOP", "")
+        )
     )
 
     # --- Storage / persistence ---

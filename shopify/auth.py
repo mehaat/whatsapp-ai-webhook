@@ -159,8 +159,38 @@ def _get_scopes() -> str:
 
 
 def _get_configured_default_shop() -> Optional[str]:
-    """Return the operator-configured default shop, if any."""
-    return _get_env("SHOPIFY_DEFAULT_SHOP")
+    """Return the operator-configured default shop, if any.
+
+    Accepts either ``DEFAULT_SHOP_DOMAIN`` (documented in .env.example and used
+    across the rest of the app) or the legacy ``SHOPIFY_DEFAULT_SHOP``.
+    """
+    return _get_env("DEFAULT_SHOP_DOMAIN") or _get_env("SHOPIFY_DEFAULT_SHOP")
+
+
+def _encrypt_for_storage(token: str) -> str:
+    """Encrypt a token for at-rest storage when TOKEN_ENCRYPTION_KEY is set.
+
+    Falls back to the plaintext value if the encryption layer is unavailable,
+    so persistence never breaks. Idempotent with :func:`_decrypt_from_storage`.
+    """
+    try:
+        from utils.security import encrypt_token
+
+        return encrypt_token(token)
+    except Exception:  # noqa: BLE001 - never block a successful OAuth install
+        return token
+
+
+def _decrypt_from_storage(token: Optional[str]) -> Optional[str]:
+    """Decrypt a stored token; passes plaintext through unchanged."""
+    if not token:
+        return token
+    try:
+        from utils.security import decrypt_token
+
+        return decrypt_token(token)
+    except Exception:  # noqa: BLE001 - degrade to raw value rather than crash
+        return token
 
 
 def _get_redirect_uri() -> Optional[str]:
@@ -638,6 +668,7 @@ class TokenStore:
 
         _ensure_schema()
         now = time.time()
+        stored_token = _encrypt_for_storage(token)
         with _WRITE_LOCK:
             conn = _connect()
             try:
@@ -650,7 +681,7 @@ class TokenStore:
                     "ON CONFLICT(shop) DO UPDATE SET "
                     "access_token = excluded.access_token, "
                     "updated_at = excluded.updated_at",
-                    (shop, token, now, now),
+                    (shop, stored_token, now, now),
                 )
                 conn.commit()
             finally:
@@ -681,7 +712,7 @@ class TokenStore:
             ).fetchone()
         finally:
             conn.close()
-        return row["access_token"] if row else None
+        return _decrypt_from_storage(row["access_token"]) if row else None
 
     def get_token(self, shop: str) -> Optional[str]:
         """Return the stored token for ``shop`` (alias of :meth:`get`).

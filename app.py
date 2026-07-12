@@ -1,7 +1,7 @@
 """
 app.py
 ------
-ME-HAAT Fashion AI Bot v4.0
+ME-HAAT Fashion AI Bot v5.1 Production Edition
 Production WhatsApp AI Sales Assistant — Shopify OAuth Edition.
 
 Entry point for the Flask application. Wires together:

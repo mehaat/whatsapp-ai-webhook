@@ -1,6 +1,18 @@
-# ME-HAAT Fashion AI Bot v4.0
+# ME-HAAT Fashion AI Bot v5.1 Production Edition
 
-Production-ready WhatsApp AI Sales Assistant for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — on full **Shopify OAuth**, a modular architecture, live product cards, and enterprise foundations.
+Production-ready WhatsApp AI Sales Assistant for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — on full **Shopify OAuth**, a modular architecture, live product cards, a login-protected admin dashboard, and enterprise foundations.
+
+## What's New in v5.1 (Production Edition)
+
+Security and reliability hardening. Everything from v5 and earlier is preserved and backward compatible — all v5.1 additions are guarded so an existing `.env` keeps working unchanged.
+
+- **Inbound webhook signature verification** — when `WHATSAPP_APP_SECRET` (your Meta App Secret) is set, every inbound `POST /webhook` is validated against Meta's `X-Hub-Signature-256` header; forged or unsigned calls are rejected with `403`. Left unset, verification is skipped and a warning is logged (unchanged behaviour).
+- **Webhook de-duplication** — Meta re-delivers webhooks until it gets a `200`; inbound message IDs are now tracked in a bounded window so the bot never replies to the same message twice.
+- **Read receipts** — inbound messages are best-effort marked as read (blue ticks).
+- **Access-token encryption at rest** — Shopify OAuth tokens in the SQLite store are transparently encrypted when `TOKEN_ENCRYPTION_KEY` is set (existing plaintext tokens still read correctly).
+- **PostgreSQL, genuinely ready** — Render/Heroku `postgres://` URLs are normalized to the `postgresql+psycopg2` dialect automatically, `psycopg2-binary` ships in `requirements.txt`, and the engine uses tuned connection pooling (`pool_size`, `max_overflow`, `pool_recycle`).
+- **Config fixes** — `DEFAULT_SHOP_DOMAIN` now correctly pins the default shop (previously only the undocumented `SHOPIFY_DEFAULT_SHOP` worked); `create_draft_order` safely skips line items missing a `variant_id`.
+- **Tests** — 35 passing (7 new for the v5.1 hardening). Two stale v4 tests were corrected.
 
 ## What's New in v4.0 (Phase 1)
 

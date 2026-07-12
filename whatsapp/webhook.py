@@ -1,16 +1,28 @@
 """
 whatsapp/webhook.py
 --------------------
-WhatsApp Cloud API webhook for ME-HAAT Fashion AI Bot v3.0.
+WhatsApp Cloud API webhook for ME-HAAT Fashion AI Bot v5.1 Production Edition.
 
 Handles the GET verification handshake and POST message/status events.
 Actual business-logic handling of an incoming message is delegated to a
 callback registered via ``init_webhook`` — this keeps the webhook module
 free of circular imports with the orchestration layer in ``app.py``.
+
+v5.1 hardening (backward compatible):
+    - Inbound POSTs are verified against Meta's ``X-Hub-Signature-256`` header
+      when ``WHATSAPP_APP_SECRET`` is configured (forged calls are rejected).
+    - Inbound message IDs are de-duplicated so Meta webhook retries never cause
+      the bot to reply to the same message twice.
+    - Inbound messages are best-effort marked as read (blue ticks).
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+from collections import OrderedDict
+from threading import Lock
 from typing import Any, Callable, Dict, Optional
 
 from flask import Blueprint, jsonify, request
@@ -27,6 +39,21 @@ MessageHandler = Callable[[str, str, str], None]
 _message_handler: Optional[MessageHandler] = None
 _rate_limiter = RateLimiter(max_requests=20, window_seconds=60)
 
+# --------------------------------------------------------------------------
+# Inbound message de-duplication
+# --------------------------------------------------------------------------
+# Meta re-delivers webhooks until it receives a 200, so the same inbound
+# message id can arrive several times. We remember a bounded window of recently
+# processed ids and skip duplicates. In-process only (see the module docstrings
+# elsewhere about single-worker deployment); good enough to stop the common
+# double-reply case within a worker.
+_DEDUPE_CAPACITY = 2048
+_seen_message_ids: "OrderedDict[str, None]" = OrderedDict()
+_dedupe_lock = Lock()
+
+# Warn only once when the app secret is missing, to avoid log spam per request.
+_warned_missing_secret = False
+
 
 def init_webhook(handler: MessageHandler) -> None:
     """Register the orchestration callback invoked for each inbound text message.
@@ -36,6 +63,52 @@ def init_webhook(handler: MessageHandler) -> None:
     """
     global _message_handler
     _message_handler = handler
+
+
+def _already_processed(message_id: str) -> bool:
+    """Return True if ``message_id`` was seen recently; otherwise record it."""
+    if not message_id:
+        return False
+    with _dedupe_lock:
+        if message_id in _seen_message_ids:
+            # Refresh recency so it stays in the window a little longer.
+            _seen_message_ids.move_to_end(message_id)
+            return True
+        _seen_message_ids[message_id] = None
+        while len(_seen_message_ids) > _DEDUPE_CAPACITY:
+            _seen_message_ids.popitem(last=False)
+        return False
+
+
+def _verify_signature(raw_body: bytes) -> bool:
+    """Verify Meta's ``X-Hub-Signature-256`` header against the app secret.
+
+    Returns True when the request is authentic OR when verification is disabled
+    (no ``WHATSAPP_APP_SECRET`` configured). Returns False only when a secret is
+    configured and the signature is missing or does not match.
+    """
+    global _warned_missing_secret
+    secret = config.whatsapp_app_secret
+    if not secret:
+        if not _warned_missing_secret:
+            logger.warning(
+                "WEBHOOK | WHATSAPP_APP_SECRET not set — inbound webhook "
+                "signatures are NOT verified. Set it for production."
+            )
+            _warned_missing_secret = True
+        return True
+
+    header = request.headers.get("X-Hub-Signature-256", "")
+    if not header.startswith("sha256="):
+        logger.warning("WEBHOOK | Missing/invalid X-Hub-Signature-256 header")
+        return False
+
+    provided = header.split("=", 1)[1].strip()
+    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(provided, expected):
+        logger.warning("WEBHOOK | X-Hub-Signature-256 mismatch — rejecting payload")
+        return False
+    return True
 
 
 @whatsapp_webhook_bp.route("/webhook", methods=["GET"])
@@ -56,7 +129,16 @@ def verify_webhook() -> Any:
 @whatsapp_webhook_bp.route("/webhook", methods=["POST"])
 def handle_webhook() -> Any:
     """Handle incoming WhatsApp messages and status updates."""
-    payload = request.get_json(force=True, silent=True) or {}
+    raw_body = request.get_data() or b""
+
+    # Reject forged/unsigned payloads when an app secret is configured.
+    if not _verify_signature(raw_body):
+        return jsonify({"status": "forbidden"}), 403
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except (ValueError, UnicodeDecodeError):
+        payload = {}
 
     try:
         for entry in payload.get("entry", []):
@@ -81,6 +163,18 @@ def _process_status_updates(value: Dict[str, Any]) -> None:
             logger.error("STATUS | Message failed for %s: %s", recipient, status.get("errors", []))
 
 
+def _mark_read_best_effort(message_id: str) -> None:
+    """Mark an inbound message as read (blue ticks); never raise."""
+    if not message_id:
+        return
+    try:
+        from whatsapp.sender import mark_message_as_read
+
+        mark_message_as_read(message_id)
+    except Exception as exc:  # noqa: BLE001 - cosmetic, must never break the webhook
+        logger.debug("WEBHOOK | mark_message_as_read failed: %s", exc)
+
+
 def _process_messages(value: Dict[str, Any]) -> None:
     """Process each inbound customer message found in the webhook payload."""
     contacts = value.get("contacts", [])
@@ -92,6 +186,14 @@ def _process_messages(value: Dict[str, Any]) -> None:
         wa_number = message.get("from", "")
         if not wa_number:
             continue
+
+        message_id = message.get("id", "")
+        if _already_processed(message_id):
+            logger.info("MESSAGE | Duplicate webhook for %s (id=%s); skipping", wa_number, message_id)
+            continue
+
+        # Best-effort read receipt; independent of downstream handling.
+        _mark_read_best_effort(message_id)
 
         if not _rate_limiter.is_allowed(wa_number):
             logger.warning("RATE_LIMIT | Blocked message from %s", wa_number)

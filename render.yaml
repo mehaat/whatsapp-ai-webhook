@@ -30,6 +30,9 @@ services:
         value: "read_products,read_orders,read_inventory,read_customers,write_draft_orders"
       - key: SHOPIFY_WEBHOOK_SECRET
         sync: false
+      # Meta App Secret — verifies inbound webhook signatures (recommended).
+      - key: WHATSAPP_APP_SECRET
+        sync: false
       - key: TOKEN_STORE_PATH
         value: /var/data/shop_tokens.json
       - key: PYTHON_VERSION
@@ -71,3 +74,64 @@ services:
         value: /var/data/mehaat_admin.db
       - key: ADMIN_SESSION_TIMEOUT_MIN
         value: "60"
+      # --- v6.0 Enterprise Commerce (optional; safe defaults) ---
+      # Commerce orders/payments/tracking persist via DATABASE_URL (the SQLite
+      # file on the mounted disk above, or a Postgres URL). Invoices are written
+      # to the persistent disk so they survive restarts.
+      - key: COMMERCE_ENABLED
+        value: "true"
+      - key: INVOICE_OUTPUT_DIR
+        value: /var/data/invoices
+      - key: DEFAULT_CURRENCY
+        value: "INR"
+      - key: DELIVERY_ESTIMATE
+        value: "3-5 Days"
+      - key: AUTO_DRAFT_ORDER
+        value: "true"
+      - key: STOCK_VALIDATION_ENABLED
+        value: "false"
+      # New-order admin alert recipient (E.164 digits, no +).
+      - key: ADMIN_WHATSAPP_NUMBER
+        sync: false
+      # Business identity printed on invoices.
+      - key: BUSINESS_NAME
+        value: "ME-HAAT Fashion"
+      - key: BUSINESS_ADDRESS
+        sync: false
+      - key: BUSINESS_GSTIN
+        sync: false
+      - key: BUSINESS_PHONE
+        sync: false
+      - key: BUSINESS_EMAIL
+        sync: false
+      # Payments: manual_upi works with no gateway account; set a provider +
+      # its credentials to enable hosted payment links.
+      - key: PAYMENT_PROVIDER
+        value: "manual_upi"
+      - key: UPI_VPA
+        sync: false
+      - key: UPI_PAYEE_NAME
+        value: "ME-HAAT Fashion"
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: CASHFREE_APP_ID
+        sync: false
+      - key: CASHFREE_SECRET_KEY
+        sync: false
+      - key: PHONEPE_MERCHANT_ID
+        sync: false
+      - key: PHONEPE_SALT_KEY
+        sync: false
+      # JWT signing secret for the programmatic order/tracking API.
+      - key: JWT_SECRET
+        sync: false
+      - key: API_KEY
+        sync: false

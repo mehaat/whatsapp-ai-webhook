@@ -1,8 +1,8 @@
 """
 app.py
 ------
-ME-HAAT Fashion AI Bot v4.0
-Production WhatsApp AI Sales Assistant — Shopify OAuth Edition.
+ME-HAAT Fashion AI Bot v6.0 Enterprise Commerce Edition
+Production WhatsApp AI Sales Assistant + Commerce Platform — Shopify OAuth Edition.
 
 Entry point for the Flask application. Wires together:
     - shopify.auth   : OAuth install/callback routes
@@ -48,7 +48,7 @@ from utils.logging import logger
 from utils.ratelimit import RateLimiter
 from utils.security import contains_injection_attempt, sanitize_input
 from whatsapp.sender import send_products, send_text_message
-from whatsapp.webhook import init_webhook, whatsapp_webhook_bp
+from whatsapp.webhook import init_order_webhook, init_webhook, whatsapp_webhook_bp
 
 # Admin dashboard (additive module). The import is guarded so that, exactly like
 # the optional database layer, a problem inside the dashboard can never prevent
@@ -108,6 +108,41 @@ register_middleware(app)
 # blueprint + session config; does not touch any existing route or behaviour.
 init_admin(app)
 
+# v6.0 Enterprise Commerce (additive). Guarded exactly like the admin/database
+# modules so any commerce failure can never prevent the core app from starting.
+# Registers the JSON order/tracking API + admin Orders dashboard, ensures the
+# commerce schema exists, and exposes the catalog-order webhook handler.
+handle_catalog_order = None
+_COMMERCE_OK = False
+try:
+    import commerce
+    from commerce.api import commerce_api_bp
+    from commerce.webhook_orders import handle_catalog_order as _handle_catalog_order
+
+    app.register_blueprint(commerce_api_bp)
+    try:
+        from admin.orders_routes import admin_orders_bp
+
+        app.register_blueprint(admin_orders_bp)
+    except Exception as exc:  # noqa: BLE001 - admin orders UI is optional
+        logger.error("COMMERCE | Admin orders dashboard unavailable: %s", exc)
+
+    commerce.bootstrap()  # ensure orders/payments/tracking/invoice tables exist
+    handle_catalog_order = _handle_catalog_order
+    _COMMERCE_OK = True
+except Exception as exc:  # noqa: BLE001 - commerce must never break startup
+    logger.error("COMMERCE | v6 commerce unavailable, continuing as v5.1: %s", exc)
+
+@app.context_processor
+def _inject_commerce_flags() -> dict:
+    """Expose whether the v6 admin Orders UI is available to templates.
+
+    Uses the live view registry so a nav link is only shown when its endpoint
+    actually exists — a missing blueprint can never break template rendering.
+    """
+    return {"commerce_ui": "admin_orders.orders_list" in app.view_functions}
+
+
 # Secondary rate limiter for AI-generation calls specifically (protects Gemini
 # quota independent of the general WhatsApp message rate limiter).
 _ai_rate_limiter = RateLimiter(max_requests=15, window_seconds=60)
@@ -137,6 +172,66 @@ bootstrap_database()  # no-op unless USE_DATABASE=true and SQLAlchemy is install
 # Core message orchestration (registered as the WhatsApp webhook handler)
 # --------------------------------------------------------------------------
 
+def _format_tracking_reply(order: dict) -> str:
+    """Build a customer-facing order-status message from an order dict."""
+    stages = ["received", "confirmed", "packed", "shipped", "out_for_delivery", "delivered"]
+    labels = {
+        "received": "Received", "confirmed": "Confirmed", "packed": "Packed",
+        "shipped": "Shipped", "out_for_delivery": "Out For Delivery",
+        "delivered": "Delivered", "cancelled": "Cancelled", "refunded": "Refunded",
+    }
+    status = order.get("status", "received")
+    current_label = labels.get(status, status.title())
+    lines = [
+        f"📦 Order {order.get('order_number')}",
+        f"Status: {current_label}",
+    ]
+    if order.get("payment_status"):
+        lines.append(f"Payment: {str(order['payment_status']).title()}")
+    if status == "shipped" and order.get("tracking_number"):
+        lines.append(f"Tracking: {order['tracking_number']}")
+        if order.get("courier"):
+            lines.append(f"Courier: {order['courier']}")
+    # A compact pipeline view.
+    if status in stages:
+        idx = stages.index(status)
+        pipeline = "  ".join(
+            ("✅" if i <= idx else "⬜") + labels[s] for i, s in enumerate(stages)
+        )
+        lines.append("")
+        lines.append(pipeline)
+    return "\n".join(lines)
+
+
+def _try_commerce_reply(wa_number: str, text: str) -> bool:
+    """Handle v6 commerce conversational intents (order tracking).
+
+    Returns True when a reply was sent (so the caller stops), False otherwise.
+    Fully guarded: any failure returns False and lets the normal pipeline run.
+    """
+    if not _COMMERCE_OK or not config.commerce_enabled:
+        return False
+    try:
+        from commerce.intent import is_tracking_intent
+        from commerce.service import order_service
+
+        if not is_tracking_intent(text or ""):
+            return False
+        order = order_service.latest_order_for(wa_number)
+        if not order:
+            send_text_message(
+                wa_number,
+                "I couldn't find a recent order linked to this number. If you placed one "
+                "via our catalog, please share your order number (e.g. MH-2026-000123).",
+            )
+            return True
+        send_text_message(wa_number, _format_tracking_reply(order))
+        return True
+    except Exception as exc:  # noqa: BLE001 - never break the message pipeline
+        logger.error("COMMERCE | tracking reply failed: %s", exc)
+        return False
+
+
 def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) -> None:
     """Route an incoming customer message to the correct handler and reply.
 
@@ -162,6 +257,10 @@ def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) ->
             "Thanks for your message! Right now I can best help with text messages. "
             "Please describe what you're looking for (e.g. 'silk saree under 3000').",
         )
+        return
+
+    # v6.0 commerce intents (order tracking) — additive, early, fully guarded.
+    if _try_commerce_reply(wa_number, raw_text):
         return
 
     start_time = time.perf_counter()
@@ -454,6 +553,11 @@ def _log_interaction(wa_number: str, user_message: str, reply: str, context: str
 
 
 init_webhook(handle_customer_message)
+
+# Wire the WhatsApp Commerce catalog-order handler (v6.0). When commerce is
+# disabled/unavailable, order messages simply fall back to the text pipeline.
+if _COMMERCE_OK and handle_catalog_order is not None:
+    init_order_webhook(handle_catalog_order)
 
 
 # --------------------------------------------------------------------------

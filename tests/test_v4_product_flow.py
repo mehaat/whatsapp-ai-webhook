@@ -139,7 +139,12 @@ def test_search_and_rank_dedupes_and_caps(fake_shop):
 def test_send_product_card_formats_and_caps(monkeypatch):
     import whatsapp.sender as sender
     captured = {}
-    monkeypatch.setattr(sender, "_post_with_retries", lambda body: captured.setdefault("body", body) or True)
+
+    def fake_post(body):
+        captured["body"] = body
+        return True
+
+    monkeypatch.setattr(sender, "_post_with_retries", fake_post)
     products = [
         {"product_id": i, "title": f"Saree {i}", "price": "1000", "currency": "INR",
          "in_stock": True, "product_type": "Saree", "variant_count": 2,
@@ -234,7 +239,8 @@ def test_health_endpoints():
     r = client.get("/health")
     assert r.status_code == 200
     data = r.get_json()
-    assert data["version"] == "4.0"
+    from config import APP_VERSION
+    assert data["version"] == APP_VERSION
     assert data["service"] == "ME-HAAT Fashion AI Bot"
     assert "components" in data  # additive
     # security headers applied by middleware

@@ -8,3 +8,5 @@ shop_tokens.json
 mehaat.db
 _v4_delta.tar.gz
 .DS_Store
+
+invoices/

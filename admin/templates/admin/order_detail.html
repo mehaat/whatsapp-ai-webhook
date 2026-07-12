@@ -1,0 +1,167 @@
+{% extends "admin/base.html" %}
+{% block title %}Order {{ order.order_number }}{% endblock %}
+{% block heading %}Order {{ order.order_number }}{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px;word-break:break-all">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar">
+  <a class="btn ghost" href="{{ url_for('admin_orders.orders_list') }}"><i class="bi bi-arrow-left"></i> Back to orders</a>
+  <span class="spacer" style="flex:1"></span>
+  <span class="pill {{ 'good' if order.payment_status=='paid' else 'bad' if order.payment_status in ['failed','expired'] else 'warn' }}">Payment: {{ order.payment_status|title }}</span>
+  <span class="pill {{ 'good' if order.status=='delivered' else 'bad' if order.status in ['cancelled','refunded'] else 'info' }}">{{ order.status.replace('_',' ')|title }}</span>
+</div>
+
+<div class="grid-2">
+  <div>
+    <!-- Summary -->
+    <div class="card-surface panel">
+      <h3>Order Summary</h3>
+      <table class="tbl">
+        <tbody>
+          <tr><th>Order Number</th><td class="mono">{{ order.order_number }}</td></tr>
+          <tr><th>Customer</th><td>{{ order.customer_name or '—' }}</td></tr>
+          <tr><th>WhatsApp</th><td class="mono">{{ order.wa_number }}</td></tr>
+          <tr><th>City / State</th><td>{{ order.city or '—' }}{% if order.state %}, {{ order.state }}{% endif %}</td></tr>
+          <tr><th>Courier</th><td>{{ order.courier or '—' }}</td></tr>
+          <tr><th>Tracking #</th><td class="mono">{{ order.tracking_number or '—' }}</td></tr>
+          <tr><th>Fulfillment</th><td>{{ (order.fulfillment_status or '')|title }}</td></tr>
+          <tr><th>Created</th><td class="subtle">{{ (order.created_at or '')[:19].replace('T',' ') }}</td></tr>
+          {% if order.checkout_url %}<tr><th>Checkout</th><td><a href="{{ order.checkout_url }}" target="_blank" rel="noopener">Open link</a></td></tr>{% endif %}
+          {% if order.invoice_url %}<tr><th>Invoice</th><td><a href="{{ order.invoice_url }}" target="_blank" rel="noopener">Open invoice</a></td></tr>{% endif %}
+          {% if order.notes %}<tr><th>Notes</th><td>{{ order.notes }}</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Items -->
+    <div class="card-surface panel mt">
+      <h3>Line Items</h3>
+      <table class="tbl">
+        <thead><tr><th>Product</th><th>Variant</th><th class="tabular">Qty</th><th class="tabular">Unit</th><th class="tabular">Line Total</th></tr></thead>
+        <tbody>
+          {% for it in order.get('items', []) %}
+          <tr>
+            <td>{{ it.product_name or it.product_retailer_id or 'Item' }}</td>
+            <td class="subtle">{{ it.variant or '—' }}</td>
+            <td class="tabular">{{ it.quantity }}</td>
+            <td class="tabular">{{ order.currency }} {{ '%.2f'|format(it.unit_price) }}</td>
+            <td class="tabular">{{ order.currency }} {{ '%.2f'|format(it.line_total) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5"><div class="empty"><i class="bi bi-bag"></i>No line items.</div></td></tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr><th colspan="4" style="text-align:right">Subtotal</th><td class="tabular">{{ order.currency }} {{ '%.2f'|format(order.subtotal) }}</td></tr>
+          <tr><th colspan="4" style="text-align:right">Discount</th><td class="tabular">− {{ order.currency }} {{ '%.2f'|format(order.discount) }}</td></tr>
+          <tr><th colspan="4" style="text-align:right">Shipping</th><td class="tabular">{{ order.currency }} {{ '%.2f'|format(order.shipping) }}</td></tr>
+          <tr><th colspan="4" style="text-align:right">Tax</th><td class="tabular">{{ order.currency }} {{ '%.2f'|format(order.tax) }}</td></tr>
+          <tr><th colspan="4" style="text-align:right">Total</th><td class="tabular"><strong>{{ order.currency }} {{ '%.2f'|format(order.total_amount) }}</strong></td></tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <!-- Tracking timeline -->
+    <div class="card-surface panel mt">
+      <h3>Tracking Timeline</h3>
+      {% if order.get('tracking') %}
+      <ul class="timeline">
+        {% for ev in order.tracking %}
+        <li>
+          <span class="dot-mark"></span>
+          <div>
+            <strong>{{ ev.status.replace('_',' ')|title }}</strong>
+            {% if ev.courier %}<span class="subtle">· {{ ev.courier }}</span>{% endif %}
+            {% if ev.tracking_number %}<span class="mono subtle">· {{ ev.tracking_number }}</span>{% endif %}
+            <div class="subtle">{{ (ev.created_at or '')[:19].replace('T',' ') }}{% if ev.location %} · {{ ev.location }}{% endif %}</div>
+            {% if ev.note %}<div>{{ ev.note }}</div>{% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="empty"><i class="bi bi-truck"></i>No tracking events yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div>
+    <div class="card-surface panel">
+      <h3>Actions</h3>
+      {% set act = url_for('admin_orders.order_action', order_id=order.id) %}
+
+      <form method="POST" action="{{ act }}" style="margin-bottom:10px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="action" value="confirm" />
+        <button class="btn primary" type="submit" style="width:100%"><i class="bi bi-check2-circle"></i> Confirm Order</button>
+      </form>
+
+      <form method="POST" action="{{ act }}" style="margin-bottom:10px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="action" value="mark_packed" />
+        <button class="btn ghost" type="submit" style="width:100%"><i class="bi bi-box"></i> Mark Packed</button>
+      </form>
+
+      <form method="POST" action="{{ act }}" style="margin-bottom:10px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="action" value="mark_shipped" />
+        <input class="field" type="text" name="courier" placeholder="Courier" value="{{ order.courier or '' }}" style="width:100%;margin-bottom:6px" />
+        <input class="field" type="text" name="tracking_number" placeholder="Tracking number" value="{{ order.tracking_number or '' }}" style="width:100%;margin-bottom:6px" />
+        <button class="btn primary" type="submit" style="width:100%"><i class="bi bi-truck"></i> Mark Shipped</button>
+      </form>
+
+      <form method="POST" action="{{ act }}" style="margin-bottom:10px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="action" value="mark_delivered" />
+        <button class="btn primary" type="submit" style="width:100%"><i class="bi bi-check-all"></i> Mark Delivered</button>
+      </form>
+
+      <form method="POST" action="{{ act }}" style="margin-bottom:10px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="action" value="generate_payment_link" />
+        <button class="btn ghost" type="submit" style="width:100%"><i class="bi bi-link-45deg"></i> Generate Payment Link</button>
+      </form>
+
+      <form method="POST" action="{{ act }}" style="margin-bottom:10px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="action" value="generate_invoice" />
+        <button class="btn ghost" type="submit" style="width:100%"><i class="bi bi-file-earmark-pdf"></i> Generate Invoice</button>
+      </form>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:14px 0" />
+
+      <form method="POST" action="{{ act }}" style="margin-bottom:10px"
+            onsubmit="return confirm('Refund this order?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="action" value="refund" />
+        <button class="btn ghost" type="submit" style="width:100%"><i class="bi bi-arrow-counterclockwise"></i> Refund</button>
+      </form>
+
+      <form method="POST" action="{{ act }}"
+            onsubmit="return confirm('Cancel this order?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="action" value="cancel" />
+        <button class="btn ghost" type="submit" style="width:100%;color:var(--critical)"><i class="bi bi-x-octagon"></i> Cancel Order</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<style>
+  .timeline { list-style:none; margin:0; padding:0; }
+  .timeline li { display:flex; gap:12px; padding:0 0 16px; position:relative; }
+  .timeline li:not(:last-child)::before { content:""; position:absolute; left:5px; top:14px; bottom:0; width:2px; background:var(--border); }
+  .timeline .dot-mark { width:12px; height:12px; border-radius:50%; background:var(--brand); margin-top:3px; flex:0 0 auto; z-index:1; }
+</style>
+{% endblock %}

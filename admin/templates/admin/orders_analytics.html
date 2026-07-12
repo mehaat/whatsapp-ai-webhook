@@ -1,0 +1,139 @@
+{% extends "admin/base.html" %}
+{% block title %}Order Analytics{% endblock %}
+{% block heading %}Order Analytics{% endblock %}
+{% block content %}
+{% set s = data.summary %}
+
+<div class="stat-grid">
+  <div class="stat"><div class="icon bg-blue"><i class="bi bi-box-seam"></i></div><div class="value">{{ s.total_orders }}</div><div class="label">Total Orders</div></div>
+  <div class="stat"><div class="icon bg-aqua"><i class="bi bi-calendar-day"></i></div><div class="value">{{ s.today_orders }}</div><div class="label">Today</div></div>
+  <div class="stat"><div class="icon bg-violet"><i class="bi bi-calendar-month"></i></div><div class="value">{{ s.month_orders }}</div><div class="label">This Month</div></div>
+  <div class="stat"><div class="icon bg-amber"><i class="bi bi-hourglass-split"></i></div><div class="value">{{ s.pending_orders }}</div><div class="label">In Progress</div></div>
+  <div class="stat"><div class="icon bg-aqua"><i class="bi bi-check-all"></i></div><div class="value">{{ s.delivered_orders }}</div><div class="label">Delivered</div></div>
+  <div class="stat"><div class="icon bg-pink"><i class="bi bi-x-octagon"></i></div><div class="value">{{ s.cancelled_orders }}</div><div class="label">Cancelled</div></div>
+  <div class="stat"><div class="icon bg-slate"><i class="bi bi-cash-stack"></i></div><div class="value">₹{{ '%.0f'|format(s.revenue) }}</div><div class="label">Revenue</div></div>
+  <div class="stat"><div class="icon bg-blue"><i class="bi bi-receipt"></i></div><div class="value">₹{{ '%.0f'|format(s.avg_order_value) }}</div><div class="label">Avg Order Value</div></div>
+  <div class="stat"><div class="icon bg-aqua"><i class="bi bi-graph-up-arrow"></i></div><div class="value">{{ data.conversion_rate }}%</div><div class="label">Conversion Rate</div></div>
+</div>
+
+<div class="grid-2 mt">
+  <div class="card-surface panel">
+    <h3>Daily Orders &amp; Revenue <span class="subtle">· last 30 days</span></h3>
+    <div class="chart-box"><canvas id="dailyChart"></canvas></div>
+  </div>
+  <div class="card-surface panel">
+    <h3>Monthly Trend <span class="subtle">· last 12 months</span></h3>
+    <div class="chart-box"><canvas id="monthlyChart"></canvas></div>
+  </div>
+</div>
+
+<div class="grid-2 mt">
+  <div class="card-surface panel">
+    <h3>Top Products</h3>
+    <table class="tbl">
+      <thead><tr><th>Product</th><th class="tabular">Qty</th><th class="tabular">Revenue</th></tr></thead>
+      <tbody>
+        {% for p in data.top_products %}
+        <tr><td>{{ p.name }}</td><td class="tabular">{{ p.qty }}</td><td class="tabular">₹{{ '%.2f'|format(p.revenue) }}</td></tr>
+        {% else %}<tr><td colspan="3"><div class="empty"><i class="bi bi-bag"></i>No product sales yet.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-surface panel">
+    <h3>Top Customers</h3>
+    <table class="tbl">
+      <thead><tr><th>Customer</th><th>Phone</th><th class="tabular">Orders</th><th class="tabular">Spend</th></tr></thead>
+      <tbody>
+        {% for c in data.top_customers %}
+        <tr><td>{{ c.customer_name or '—' }}</td><td class="mono">{{ c.wa_number }}</td><td class="tabular">{{ c.orders }}</td><td class="tabular">₹{{ '%.2f'|format(c.spend) }}</td></tr>
+        {% else %}<tr><td colspan="4"><div class="empty"><i class="bi bi-people"></i>No customers yet.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid-2 mt">
+  <div class="card-surface panel">
+    <h3>Sales by State</h3>
+    <table class="tbl">
+      <thead><tr><th>State</th><th class="tabular">Orders</th><th class="tabular">Revenue</th></tr></thead>
+      <tbody>
+        {% for r in data.regions.by_state %}
+        <tr><td>{{ r.state }}</td><td class="tabular">{{ r.orders }}</td><td class="tabular">₹{{ '%.2f'|format(r.revenue) }}</td></tr>
+        {% else %}<tr><td colspan="3"><div class="empty"><i class="bi bi-geo-alt"></i>No regional data yet.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-surface panel">
+    <h3>Sales by City</h3>
+    <table class="tbl">
+      <thead><tr><th>City</th><th class="tabular">Orders</th><th class="tabular">Revenue</th></tr></thead>
+      <tbody>
+        {% for r in data.regions.by_city %}
+        <tr><td>{{ r.city }}</td><td class="tabular">{{ r.orders }}</td><td class="tabular">₹{{ '%.2f'|format(r.revenue) }}</td></tr>
+        {% else %}<tr><td colspan="3"><div class="empty"><i class="bi bi-geo-alt"></i>No city data yet.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script id="oa-data" type="application/json">{{ data|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var d = JSON.parse(document.getElementById("oa-data").textContent);
+  var A = window.MehaatAdmin;
+  function ink() {
+    if (A && typeof A.chartInk === "function") return A.chartInk();
+    var dark = document.documentElement.getAttribute("data-theme") === "dark";
+    return {
+      text: dark ? "#cbd5e1" : "#334155",
+      grid: dark ? "rgba(148,163,184,0.15)" : "rgba(100,116,139,0.15)",
+      brand: "#6D28D9", s1: "#6D28D9", s2: "#0ea5e9"
+    };
+  }
+  var dailyChart, monthlyChart;
+  function build() {
+    var k = ink();
+    var opts = {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: k.text, usePointStyle: true } } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: k.text, maxRotation: 0, autoSkip: true } },
+        y: { beginAtZero: true, grid: { color: k.grid }, ticks: { color: k.text, precision: 0 } },
+        y1: { position: "right", beginAtZero: true, grid: { display: false }, ticks: { color: k.text } }
+      }
+    };
+    if (dailyChart) dailyChart.destroy();
+    dailyChart = new Chart(document.getElementById("dailyChart"), {
+      data: {
+        labels: d.daily.map(function (p) { return p.period.slice(5); }),
+        datasets: [
+          { type: "bar", label: "Orders", data: d.daily.map(function (p) { return p.orders; }),
+            backgroundColor: k.s1, borderRadius: 4, yAxisID: "y" },
+          { type: "line", label: "Revenue", data: d.daily.map(function (p) { return p.revenue; }),
+            borderColor: k.s2, backgroundColor: k.s2, tension: 0.3, yAxisID: "y1", pointRadius: 2 }
+        ]
+      },
+      options: opts
+    });
+    if (monthlyChart) monthlyChart.destroy();
+    monthlyChart = new Chart(document.getElementById("monthlyChart"), {
+      data: {
+        labels: d.monthly.map(function (p) { return p.period; }),
+        datasets: [
+          { type: "bar", label: "Orders", data: d.monthly.map(function (p) { return p.orders; }),
+            backgroundColor: k.s1, borderRadius: 4, yAxisID: "y" },
+          { type: "line", label: "Revenue", data: d.monthly.map(function (p) { return p.revenue; }),
+            borderColor: k.s2, backgroundColor: k.s2, tension: 0.3, yAxisID: "y1", pointRadius: 2 }
+        ]
+      },
+      options: opts
+    });
+  }
+  build();
+  window.addEventListener("themechange", build);
+})();
+</script>
+{% endblock %}

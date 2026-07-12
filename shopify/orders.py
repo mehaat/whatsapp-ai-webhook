@@ -189,14 +189,16 @@ def create_draft_order(
         logger.warning("SHOPIFY_ORDERS | create_draft_order called with no line items")
         return None
 
-    payload = {
-        "draft_order": {
-            "line_items": [
-                {"variant_id": item["variant_id"], "quantity": item.get("quantity", 1)}
-                for item in line_items
-            ]
-        }
-    }
+    normalized_items = [
+        {"variant_id": item["variant_id"], "quantity": item.get("quantity", 1)}
+        for item in line_items
+        if item.get("variant_id")
+    ]
+    if not normalized_items:
+        logger.warning("SHOPIFY_ORDERS | create_draft_order: no line items with a variant_id")
+        return None
+
+    payload = {"draft_order": {"line_items": normalized_items}}
 
     response = client.post("draft_orders.json", json_body=payload)
     if not response or "draft_order" not in response:

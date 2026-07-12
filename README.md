@@ -1,6 +1,34 @@
-# ME-HAAT Fashion AI Bot v4.0
+# ME-HAAT Fashion AI Bot v6.0 Enterprise Commerce Edition
 
-Production-ready WhatsApp AI Sales Assistant for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — on full **Shopify OAuth**, a modular architecture, live product cards, and enterprise foundations.
+Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — full **Shopify OAuth**, live product cards, catalog ordering, automatic Shopify draft orders, payment links, PDF invoices, live order tracking, a login-protected admin dashboard with an Orders module + analytics, and enterprise foundations.
+
+## What's New in v6.0 (Enterprise Commerce Edition)
+
+Everything from v5.1 is preserved and backward compatible. The whole commerce surface is additive and controlled by `COMMERCE_ENABLED` (default on); set it to `false` and the app behaves exactly like v5.1.
+
+- **WhatsApp catalog orders** — the webhook now handles `message.type == "order"`. Each order is parsed (customer, catalog id, retailer ids, quantities, unit prices, currency, total), persisted, and assigned an internal number like `MH-2026-000001`. Meta webhook retries are de-duplicated so an order is never created twice.
+- **Automatic Shopify draft orders** — a Shopify draft order is created for each catalog order (best-effort), storing the draft id, checkout and invoice URLs back on the order.
+- **Customer notifications** — bilingual (Hindi/English) WhatsApp messages for order received, confirmed, payment pending, shipped, and delivered.
+- **Live order tracking** — a JSON API (`GET /orders`, `GET /orders/<id>`, `POST /orders/update`, `GET /tracking/<id>`) plus a conversational path: "where is my order" / "track my order" (and Hindi equivalents) returns the latest order's status pipeline.
+- **Admin Orders dashboard** — a full Orders module at `/admin/commerce/orders`: filterable/searchable table, per-order detail with a tracking timeline, one-click actions (confirm, cancel, mark packed/shipped/delivered, refund, generate invoice, generate payment link), and CSV/Excel/PDF export. Plus an **Order Analytics** page (today/monthly/pending/delivered/cancelled, revenue, AOV, conversion rate, top products/customers, sales by state/city, daily/monthly/yearly charts).
+- **Payment links** — a provider-adapter system supporting **Razorpay, Stripe, Cashfree, PhonePe, and Manual UPI**, with signature-verified payment webhooks (`POST /payments/webhook/<provider>`). Manual UPI works with no gateway account; the others activate when their credentials are set.
+- **PDF invoices** — professional ReportLab invoices with logo, GST/business identity, line items, discount/shipping/tax/grand total, a QR code, and a unique invoice number.
+- **AI intent detection** — bilingual recognition of browse, order, track, payment, return, refund, cancel, delivery-time, invoice, coupon, stock, support, human-agent and escalation intents.
+- **Enterprise data model + automatic migrations** — new `orders`, `order_items`, `payments`, `tracking`, `invoices`, `notifications`, `audit_logs`, `analytics` tables on SQLite **or** PostgreSQL, created and additively migrated on startup (no manual DB steps).
+- **Security** — JWT/API-key auth on the order API, Meta webhook signature verification (v5.1), Shopify HMAC (existing), per-provider payment webhook signature checks, CSRF on admin actions, parameterized SQL throughout.
+- **Tests** — 78 passing, including an end-to-end catalog-order webhook test.
+
+## What's New in v5.1 (Production Edition)
+
+Security and reliability hardening. Everything from v5 and earlier is preserved and backward compatible — all v5.1 additions are guarded so an existing `.env` keeps working unchanged.
+
+- **Inbound webhook signature verification** — when `WHATSAPP_APP_SECRET` (your Meta App Secret) is set, every inbound `POST /webhook` is validated against Meta's `X-Hub-Signature-256` header; forged or unsigned calls are rejected with `403`. Left unset, verification is skipped and a warning is logged (unchanged behaviour).
+- **Webhook de-duplication** — Meta re-delivers webhooks until it gets a `200`; inbound message IDs are now tracked in a bounded window so the bot never replies to the same message twice.
+- **Read receipts** — inbound messages are best-effort marked as read (blue ticks).
+- **Access-token encryption at rest** — Shopify OAuth tokens in the SQLite store are transparently encrypted when `TOKEN_ENCRYPTION_KEY` is set (existing plaintext tokens still read correctly).
+- **PostgreSQL, genuinely ready** — Render/Heroku `postgres://` URLs are normalized to the `postgresql+psycopg2` dialect automatically, `psycopg2-binary` ships in `requirements.txt`, and the engine uses tuned connection pooling (`pool_size`, `max_overflow`, `pool_recycle`).
+- **Config fixes** — `DEFAULT_SHOP_DOMAIN` now correctly pins the default shop (previously only the undocumented `SHOPIFY_DEFAULT_SHOP` worked); `create_draft_order` safely skips line items missing a `variant_id`.
+- **Tests** — 35 passing (7 new for the v5.1 hardening). Two stale v4 tests were corrected.
 
 ## What's New in v4.0 (Phase 1)
 

@@ -1,5 +1,5 @@
-# ME-HAAT Fashion AI Bot v4.0 — runtime dependencies
-# Core (v3.0) — unchanged
+# ME-HAAT Fashion AI Bot v6.0 Enterprise Commerce Edition — runtime dependencies
+# Core — unchanged
 Flask==3.0.3
 gunicorn==22.0.0
 requests==2.32.3
@@ -10,12 +10,22 @@ python-dotenv==1.0.1
 SQLAlchemy>=2.0,<2.1
 # cryptography enables optional token encryption at rest (TOKEN_ENCRYPTION_KEY).
 cryptography>=42.0.0
-# PostgreSQL driver — only needed when DATABASE_URL points at Postgres.
-# Uncomment on deployments that use Postgres (e.g. Render Managed Postgres):
-# psycopg2-binary>=2.9.9
+# PostgreSQL driver — used when DATABASE_URL points at Postgres (e.g. Render
+# Managed Postgres). db.py normalizes Render's postgres:// scheme to the
+# postgresql+psycopg2 dialect automatically. Harmless when running on SQLite.
+psycopg2-binary>=2.9.9
 
 # v4.2 additions — Admin Dashboard exports.
 # openpyxl powers Excel (.xlsx) export; reportlab powers PDF export. Both are
 # imported lazily and guarded, so CSV export still works if either is absent.
 openpyxl>=3.1.2
 reportlab>=4.0.0
+
+# v6.0 Enterprise Commerce additions.
+# qrcode powers the QR code embedded on PDF invoices (Pillow backend).
+qrcode[pil]>=7.4.2
+# PyJWT secures the programmatic order/tracking API (Bearer tokens).
+PyJWT>=2.8.0
+# NOTE: payment gateways (Razorpay/Stripe/Cashfree/PhonePe) are integrated via
+# their REST APIs using the existing `requests` dependency — no gateway SDKs
+# are required, keeping the dependency surface small.

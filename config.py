@@ -1,7 +1,7 @@
 """
 config.py
 ---------
-Central configuration for ME-HAAT Fashion AI Bot v5
+Central configuration for ME-HAAT Fashion AI Bot v6.0 Enterprise Commerce Edition
 
 All environment variables are read once here and exposed as a typed
 ``Config`` object, so the rest of the codebase never calls ``os.environ``
@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_VERSION = "5"
+APP_VERSION = "6.0"
 
 
 def _split_scopes(raw: str) -> List[str]:
@@ -53,6 +53,14 @@ class Config:
     # attempts native Product Messages before falling back to text cards.
     whatsapp_catalog_id: str = field(
         default_factory=lambda: os.environ.get("WHATSAPP_CATALOG_ID", "")
+    )
+
+    # Optional (v5.1): Meta App Secret used to verify the X-Hub-Signature-256
+    # header on inbound webhook POSTs. When set, unsigned/forged webhook calls
+    # are rejected with 403. When unset, verification is skipped (a warning is
+    # logged) so existing deployments keep working unchanged.
+    whatsapp_app_secret: str = field(
+        default_factory=lambda: os.environ.get("WHATSAPP_APP_SECRET", "")
     )
 
     # --- Gemini AI ---
@@ -91,7 +99,10 @@ class Config:
     # Optional: for single-store deployments that want to pin a default shop
     # (e.g. the merchant has already installed the app once).
     default_shop_domain: str = field(
-        default_factory=lambda: os.environ.get("DEFAULT_SHOP_DOMAIN", "")
+        default_factory=lambda: (
+            os.environ.get("DEFAULT_SHOP_DOMAIN")
+            or os.environ.get("SHOPIFY_DEFAULT_SHOP", "")
+        )
     )
 
     # --- Storage / persistence ---
@@ -111,6 +122,117 @@ class Config:
     database_url: str = field(
         default_factory=lambda: os.environ.get("DATABASE_URL", "sqlite:///mehaat.db")
     )
+
+    # --- v6.0 Enterprise Commerce (additive, on by default) ---
+    # The commerce order store (orders/payments/tracking/invoices) persists via
+    # the SQLAlchemy layer regardless of USE_DATABASE, because the WhatsApp
+    # Commerce flow needs durable orders. Set COMMERCE_ENABLED=false to fully
+    # disable the v6 commerce surface and behave exactly like v5.1.
+    commerce_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("COMMERCE_ENABLED", "true"), True)
+    )
+    order_number_prefix: str = field(
+        default_factory=lambda: os.environ.get("ORDER_NUMBER_PREFIX", "MH")
+    )
+    default_currency: str = field(
+        default_factory=lambda: os.environ.get("DEFAULT_CURRENCY", "INR")
+    )
+    # Estimated delivery window shown in the "order confirmed" message.
+    delivery_estimate: str = field(
+        default_factory=lambda: os.environ.get("DELIVERY_ESTIMATE", "3-5 Days")
+    )
+    # Stock validation before creating a Shopify draft order. Default OFF
+    # (fail-open) because WhatsApp catalog retailer-id -> Shopify variant mapping
+    # is deployment-specific; enable once your catalog ids map to variant ids.
+    stock_validation_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("STOCK_VALIDATION_ENABLED", "false"), False)
+    )
+    # Auto-create a Shopify draft order when a catalog order arrives (default on).
+    auto_draft_order: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("AUTO_DRAFT_ORDER", "true"), True)
+    )
+    # WhatsApp number (E.164 digits, no +) that receives admin order alerts.
+    admin_whatsapp_number: str = field(
+        default_factory=lambda: os.environ.get("ADMIN_WHATSAPP_NUMBER", "")
+    )
+
+    # --- Business / invoice identity (used on PDF invoices) ---
+    business_name: str = field(
+        default_factory=lambda: os.environ.get("BUSINESS_NAME", "ME-HAAT Fashion")
+    )
+    business_address: str = field(
+        default_factory=lambda: os.environ.get("BUSINESS_ADDRESS", "")
+    )
+    business_gstin: str = field(default_factory=lambda: os.environ.get("BUSINESS_GSTIN", ""))
+    business_phone: str = field(default_factory=lambda: os.environ.get("BUSINESS_PHONE", ""))
+    business_email: str = field(default_factory=lambda: os.environ.get("BUSINESS_EMAIL", ""))
+    business_website: str = field(
+        default_factory=lambda: os.environ.get("BUSINESS_WEBSITE", "https://mehaatfaishon.com")
+    )
+    invoice_logo_path: str = field(
+        default_factory=lambda: os.environ.get("INVOICE_LOGO_PATH", "")
+    )
+    invoice_output_dir: str = field(
+        default_factory=lambda: os.environ.get("INVOICE_OUTPUT_DIR", "invoices")
+    )
+    # Default GST rate applied when an order does not carry its own tax figure.
+    tax_rate_percent: float = field(
+        default_factory=lambda: float(os.environ.get("TAX_RATE_PERCENT", "0") or 0)
+    )
+    shipping_flat: float = field(
+        default_factory=lambda: float(os.environ.get("SHIPPING_FLAT", "0") or 0)
+    )
+
+    # --- Payments (provider adapter pattern; manual UPI always works) ---
+    # One of: manual_upi | razorpay | stripe | cashfree | phonepe.
+    payment_provider: str = field(
+        default_factory=lambda: os.environ.get("PAYMENT_PROVIDER", "manual_upi").strip().lower()
+    )
+    payment_link_expiry_minutes: int = field(
+        default_factory=lambda: int(os.environ.get("PAYMENT_LINK_EXPIRY_MINUTES", "1440"))
+    )
+    upi_vpa: str = field(default_factory=lambda: os.environ.get("UPI_VPA", ""))
+    upi_payee_name: str = field(
+        default_factory=lambda: os.environ.get("UPI_PAYEE_NAME", "ME-HAAT Fashion")
+    )
+    razorpay_key_id: str = field(default_factory=lambda: os.environ.get("RAZORPAY_KEY_ID", ""))
+    razorpay_key_secret: str = field(
+        default_factory=lambda: os.environ.get("RAZORPAY_KEY_SECRET", "")
+    )
+    razorpay_webhook_secret: str = field(
+        default_factory=lambda: os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
+    )
+    stripe_secret_key: str = field(
+        default_factory=lambda: os.environ.get("STRIPE_SECRET_KEY", "")
+    )
+    stripe_webhook_secret: str = field(
+        default_factory=lambda: os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+    )
+    cashfree_app_id: str = field(default_factory=lambda: os.environ.get("CASHFREE_APP_ID", ""))
+    cashfree_secret_key: str = field(
+        default_factory=lambda: os.environ.get("CASHFREE_SECRET_KEY", "")
+    )
+    cashfree_env: str = field(
+        default_factory=lambda: os.environ.get("CASHFREE_ENV", "sandbox").strip().lower()
+    )
+    phonepe_merchant_id: str = field(
+        default_factory=lambda: os.environ.get("PHONEPE_MERCHANT_ID", "")
+    )
+    phonepe_salt_key: str = field(default_factory=lambda: os.environ.get("PHONEPE_SALT_KEY", ""))
+    phonepe_salt_index: str = field(
+        default_factory=lambda: os.environ.get("PHONEPE_SALT_INDEX", "1")
+    )
+    phonepe_env: str = field(
+        default_factory=lambda: os.environ.get("PHONEPE_ENV", "sandbox").strip().lower()
+    )
+
+    # --- API security (JWT for the programmatic order/tracking API) ---
+    jwt_secret: str = field(default_factory=lambda: os.environ.get("JWT_SECRET", ""))
+    jwt_expiry_minutes: int = field(
+        default_factory=lambda: int(os.environ.get("JWT_EXPIRY_MINUTES", "1440"))
+    )
+    # Optional simple bearer key accepted by the order API in addition to JWT.
+    api_key: str = field(default_factory=lambda: os.environ.get("API_KEY", ""))
 
     # --- Observability ---
     # "text" (default, v3.0 behaviour) or "json" (structured logs).

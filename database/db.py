@@ -32,20 +32,40 @@ _engine = None
 _SessionFactory = None
 
 
+def normalize_database_url(url: str) -> str:
+    """Normalize a DATABASE_URL for SQLAlchemy 2.0.
+
+    Render/Heroku hand out ``postgres://`` URLs, which SQLAlchemy 2.0 rejects
+    with ``NoSuchModuleError``. Rewrite the scheme to the ``postgresql+psycopg2``
+    dialect so a managed-Postgres deployment works out of the box.
+    """
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg2://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + url[len("postgresql://"):]
+    return url
+
+
 def get_engine():
     """Lazily create (once) and return the SQLAlchemy engine."""
     global _engine
     if _engine is None:
-        url = config.database_url
+        url = normalize_database_url(config.database_url)
         connect_args = {}
+        engine_kwargs = {"pool_pre_ping": True, "future": True}
         if url.startswith("sqlite"):
             connect_args = {"check_same_thread": False}
-        _engine = create_engine(
-            url,
-            pool_pre_ping=True,
-            future=True,
-            connect_args=connect_args,
-        )
+        else:
+            # Sensible pool defaults for server databases (Postgres/MySQL).
+            # pool_recycle guards against stale connections dropped by the DB or
+            # a proxy after idle periods (common on managed Postgres).
+            engine_kwargs.update(
+                pool_size=5,
+                max_overflow=10,
+                pool_recycle=1800,
+                pool_timeout=30,
+            )
+        _engine = create_engine(url, connect_args=connect_args, **engine_kwargs)
         logger.info("DATABASE | Engine initialised for %s", url.split("://", 1)[0])
     return _engine
 

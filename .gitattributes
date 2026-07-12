@@ -1,0 +1,11 @@
+# Enforce LF line endings across the repo (Linux/Render deployment target).
+# Prevents CRLF creeping in from Windows checkouts.
+* text=auto eol=lf
+
+# Explicit binary types (never normalize).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.db binary

@@ -49,7 +49,7 @@ services:
         value: "text"
       # Optional persistence layer (SQLAlchemy). "false" keeps in-memory only.
       - key: USE_DATABASE
-        value: "false"
+        value: "true"
       # Database URL used only when USE_DATABASE=true (SQLite default on the
       # mounted disk; set a Postgres URL for durable, multi-worker storage).
       - key: DATABASE_URL

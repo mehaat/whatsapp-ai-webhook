@@ -1,5 +1,12 @@
 # ME-HAAT Fashion AI Bot — Enterprise Roadmap & Status
 
+> **v9.0 update:** delivered the developer portal 2.0 (full OpenAPI + usage analytics),
+> deep Sentry + Redis cache/HA (Sentinel/Cluster + shared rate limiting), **Kubernetes+Helm**
+> chart (§19), and **Advanced AI Commerce** — Visual Product Search, AI Stylist, Personal
+> Shopping Assistant, and a Recommendation Engine (§4/§18). Visual search runs offline
+> (histogram+pHash) with a Gemini-Vision upgrade path. Remaining ⏳: live Grafana cluster
+> dashboards beyond the shipped one, full row-level tenant isolation, and voice/Flow API.
+
 > **v8.0 update:** the five deep-infra items previously marked ⏳ are now delivered —
 > **Redis+Celery** background processing (§12), **Prometheus+Grafana+Sentry** monitoring (§13),
 > the **OpenAPI/Swagger developer portal** with API keys (§15), **multi-tenant** groundwork

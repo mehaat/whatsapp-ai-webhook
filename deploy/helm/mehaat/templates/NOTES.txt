@@ -1,0 +1,42 @@
+ME-HAAT Fashion AI Bot v{{ .Chart.AppVersion }} has been deployed as release "{{ .Release.Name }}".
+
+1. Get the application URL:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else if eq .Values.service.type "LoadBalancer" }}
+  export SVC_IP=$(kubectl get svc {{ include "mehaat.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  echo "http://$SVC_IP:{{ .Values.service.port }}"
+{{- else }}
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "mehaat.fullname" . }} 8080:{{ .Values.service.port }}
+  # then open http://localhost:8080
+{{- end }}
+
+2. Check health:
+  kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "mehaat.fullname" . }}-web -- curl -fsS http://localhost:5000/health/ready
+
+3. Database migrations (Alembic):
+{{- if .Values.migrations.enabled }}
+  The pre-install/pre-upgrade migration Job ran `{{ join " " .Values.migrations.command }}`.
+  View logs: kubectl logs -n {{ .Release.Namespace }} job/{{ include "mehaat.fullname" . }}-migrate
+{{- else }}
+  migrations.enabled is false. Run manually:
+  kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "mehaat.fullname" . }}-web -- alembic upgrade head
+{{- end }}
+
+4. Background workers:
+{{- if .Values.worker.enabled }}
+  Celery worker replicas: {{ .Values.worker.replicas }} (queue "{{ .Values.worker.queue }}").
+{{- else }}
+  Celery worker is DISABLED. Set worker.enabled=true (and QUEUE_BACKEND=celery + REDIS_URL) to enable.
+{{- end }}
+{{- if .Values.beat.enabled }}
+  Celery beat scheduler is running (singleton).
+{{- end }}
+
+5. Secrets: make sure you supplied WHATSAPP_TOKEN, GEMINI_API_KEY, SHOPIFY_API_SECRET,
+   JWT_SECRET, ADMIN_PASSWORD, REDIS_URL and DATABASE_URL via --set-string secretEnv.KEY=...
+   or a values file. Never commit real secrets.
+
+6. Autoscaling: {{ if .Values.autoscaling.enabled }}HPA active ({{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} pods @ {{ .Values.autoscaling.targetCPUUtilizationPercentage }}% CPU).{{ else }}disabled (fixed {{ .Values.replicaCount }} replicas).{{ end }}

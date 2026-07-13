@@ -40,6 +40,8 @@ OrderHandler = Callable[[Dict[str, Any], str], None]
 
 _message_handler: Optional[MessageHandler] = None
 _order_handler: Optional[OrderHandler] = None
+# Type: (message: dict, profile_name: str) -> None  (inbound image → visual search)
+_image_handler: Optional[OrderHandler] = None
 _rate_limiter = RateLimiter(max_requests=20, window_seconds=60)
 
 # --------------------------------------------------------------------------
@@ -77,6 +79,17 @@ def init_order_webhook(handler: OrderHandler) -> None:
     """
     global _order_handler
     _order_handler = handler
+
+
+def init_image_webhook(handler: OrderHandler) -> None:
+    """Register the callback invoked for each inbound WhatsApp image (v9.0).
+
+    Args:
+        handler: Callable taking (message: dict, profile_name: str). Optional;
+            when unset, image messages fall back to the unsupported-type reply.
+    """
+    global _image_handler
+    _image_handler = handler
 
 
 def _already_processed(message_id: str) -> bool:
@@ -234,6 +247,15 @@ def _process_messages(value: Dict[str, Any]) -> None:
                 _order_handler(message, profile_name)
             except Exception as exc:  # noqa: BLE001 - never crash the webhook
                 logger.error("ORDER | Order handler failed for %s: %s", wa_number, exc)
+            continue
+
+        # v9.0: inbound image → visual product search.
+        if message_type == "image" and _image_handler is not None:
+            logger.info("IMAGE | Incoming image from %s", wa_number)
+            try:
+                _image_handler(message, profile_name)
+            except Exception as exc:  # noqa: BLE001 - never crash the webhook
+                logger.error("IMAGE | Image handler failed for %s: %s", wa_number, exc)
             continue
 
         if not _rate_limiter.is_allowed(wa_number):

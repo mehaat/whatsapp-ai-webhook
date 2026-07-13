@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mehaat
+  namespace: mehaat
+  labels:
+    app.kubernetes.io/name: mehaat
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Keep the Prometheus /metrics endpoint off the public ingress; scrape it
+    # in-cluster via the Service. This nginx snippet denies external access.
+    nginx.ingress.kubernetes.io/server-snippet: |
+      location = /metrics { deny all; return 403; }
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mehaat.example.com
+      secretName: mehaat-tls
+  rules:
+    - host: mehaat.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mehaat
+                port:
+                  number: 80

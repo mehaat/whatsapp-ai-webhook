@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_VERSION = "8.0"
+APP_VERSION = "9.0"
 
 
 def _split_scopes(raw: str) -> List[str]:
@@ -250,6 +250,49 @@ class Config:
     )
     compliance_export_dir: str = field(
         default_factory=lambda: os.environ.get("COMPLIANCE_EXPORT_DIR", "exports")
+    )
+
+    # --- v9.0 caching / HA ---
+    # Redis-backed cache + rate limiting (falls back to in-process when no Redis).
+    cache_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("CACHE_ENABLED", "true"), True)
+    )
+    cache_ttl_seconds: int = field(
+        default_factory=lambda: int(os.environ.get("CACHE_TTL_SECONDS", "300"))
+    )
+    # Comma-separated "host:port" Sentinel endpoints for Redis HA (optional).
+    redis_sentinels: str = field(default_factory=lambda: os.environ.get("REDIS_SENTINELS", ""))
+    redis_sentinel_master: str = field(
+        default_factory=lambda: os.environ.get("REDIS_SENTINEL_MASTER", "mymaster")
+    )
+    redis_cluster: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("REDIS_CLUSTER", "false"), False)
+    )
+
+    # --- v9.0 Sentry (expanded) ---
+    sentry_environment: str = field(
+        default_factory=lambda: os.environ.get("SENTRY_ENVIRONMENT", "production")
+    )
+    sentry_traces_sample_rate: float = field(
+        default_factory=lambda: float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1") or 0.1)
+    )
+
+    # --- v9.0 Advanced AI Commerce ---
+    recommendations_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("RECOMMENDATIONS_ENABLED", "true"), True)
+    )
+    visual_search_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("VISUAL_SEARCH_ENABLED", "true"), True)
+    )
+    ai_stylist_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("AI_STYLIST_ENABLED", "true"), True)
+    )
+    # Visual embedder backend: "histogram" (offline, always works) or "gemini".
+    visual_embedder: str = field(
+        default_factory=lambda: os.environ.get("VISUAL_EMBEDDER", "histogram").strip().lower()
+    )
+    gemini_vision_model: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash")
     )
 
     # --- Business / invoice identity (used on PDF invoices) ---

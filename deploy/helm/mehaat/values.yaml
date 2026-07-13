@@ -1,0 +1,177 @@
+# Default values for the mehaat chart.
+# Override with: helm install mehaat deploy/helm/mehaat -f my-values.yaml
+
+# -- Container image for web, worker and beat (they share one image).
+image:
+  repository: ghcr.io/me-haat/mehaat-fashion-ai-bot
+  tag: "9.0"
+  pullPolicy: IfNotPresent
+
+# -- Image pull secrets for private registries (list of {name: ...}).
+imagePullSecrets: []
+
+# -- Override chart name / fullname if desired.
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Web (Gunicorn) deployment replica count. Ignored when autoscaling.enabled.
+replicaCount: 2
+
+# -- Gunicorn tuning. Keep workers=1 unless the app is fully stateless/Redis-backed.
+gunicorn:
+  workers: 1
+  threads: 4
+  timeout: 60
+
+# -- Celery worker deployment (QUEUE_BACKEND=celery + REDIS_URL required).
+worker:
+  enabled: false
+  replicas: 2
+  queue: mehaat
+
+# -- Celery beat (periodic scheduler). Single replica only.
+beat:
+  enabled: false
+
+# -- Resource requests/limits per component.
+resources:
+  web:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  worker:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  beat:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# -- Non-secret environment variables rendered into a ConfigMap.
+env:
+  PORT: "5000"
+  LOG_FORMAT: "json"
+  LOG_LEVEL: "INFO"
+  USE_DATABASE: "true"
+  COMMERCE_ENABLED: "true"
+  METRICS_ENABLED: "true"
+  QUEUE_BACKEND: "celery"
+  JOBS_ENABLED: "true"
+  MULTI_TENANT_ENABLED: "false"
+  DEVELOPER_PORTAL_ENABLED: "true"
+  TOKEN_STORE_PATH: "/var/data/shop_tokens.json"
+  INVOICE_OUTPUT_DIR: "/var/data/invoices"
+  SHOPIFY_SCOPES: "read_products,read_orders,read_inventory,read_customers,write_draft_orders"
+
+# -- Sensitive environment variables rendered into an Opaque Secret (stringData).
+#    Fill these in your own values file — NEVER commit real secrets. Any key you
+#    add here is injected via envFrom alongside the ConfigMap. Common keys:
+#    WHATSAPP_TOKEN, WHATSAPP_APP_SECRET, VERIFY_TOKEN, PHONE_NUMBER_ID,
+#    GEMINI_API_KEY, SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SHOPIFY_WEBHOOK_SECRET,
+#    JWT_SECRET, API_KEY, ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_SECRET_KEY,
+#    TOKEN_ENCRYPTION_KEY, SENTRY_DSN, REDIS_URL, DATABASE_URL.
+secretEnv: {}
+  # WHATSAPP_TOKEN: ""
+  # GEMINI_API_KEY: ""
+  # SHOPIFY_API_SECRET: ""
+  # JWT_SECRET: ""
+  # ADMIN_PASSWORD: ""
+  # REDIS_URL: "redis://mehaat-redis-master:6379/0"
+  # DATABASE_URL: "postgresql+psycopg2://mehaat:pass@mehaat-postgresql:5432/mehaat"
+
+# -- Reference existing Secret(s) instead of / in addition to secretEnv.
+extraEnvFromSecrets: []
+  # - my-external-secret
+
+# -- Kubernetes Service in front of the web pods.
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 5000
+
+# -- Ingress. Set enabled=true and provide hosts + (optional) TLS.
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: mehaat.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: mehaat-tls
+    #   hosts:
+    #     - mehaat.example.com
+
+# -- Horizontal Pod Autoscaler for the web deployment (CPU based).
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+# -- Redis. In-cluster (bitnami-style) toggle OR bring your own URL.
+#    When redis.enabled=false you must supply REDIS_URL (externalRedisUrl or
+#    secretEnv.REDIS_URL). externalRedisUrl, if set, is injected as REDIS_URL.
+redis:
+  enabled: false
+  externalRedisUrl: ""
+
+# -- PostgreSQL. In-cluster toggle OR bring your own managed URL.
+#    externalDatabaseUrl, if set, is injected as DATABASE_URL.
+postgresql:
+  enabled: false
+  externalDatabaseUrl: ""
+
+# -- Persistent data volume mounted at /var/data (SQLite, invoices, tokens).
+persistence:
+  enabled: true
+  size: 2Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  mountPath: /var/data
+
+# -- PodDisruptionBudget for the web deployment.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# -- ServiceAccount.
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# -- Alembic migration hook. When enabled a pre-install/pre-upgrade Job runs
+#    `alembic upgrade head` before the web pods roll.
+migrations:
+  enabled: false
+  command:
+    - alembic
+    - upgrade
+    - head
+
+# -- Health probe paths (match the Flask app).
+probes:
+  livenessPath: /health/live
+  readinessPath: /health/ready
+
+# -- Pod scheduling passthrough.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}

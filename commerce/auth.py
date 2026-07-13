@@ -186,6 +186,18 @@ def require_api_auth(view: Callable) -> Callable:
     @functools.wraps(view)
     def wrapped(*args: Any, **kwargs: Any):
         if is_request_authenticated():
+            # v9.0: meter developer-key usage (best-effort; never raises).
+            provided = request.headers.get("X-API-Key", "") or ""
+            if provided.startswith("mh_live_"):
+                try:
+                    from commerce.api_usage import record_usage
+                    from commerce.apikeys import _parse_prefix
+
+                    prefix = _parse_prefix(provided)
+                    if prefix:
+                        record_usage(prefix, f"{request.method} {request.path}")
+                except Exception:  # noqa: BLE001
+                    pass
             return view(*args, **kwargs)
         try:
             from flask import g

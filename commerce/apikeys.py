@@ -264,6 +264,16 @@ def check_rate_limit(prefix: str, limit_per_min: int) -> bool:
     if not prefix:
         return True
 
+    # v9.0: prefer the shared Redis-backed limiter (global across workers);
+    # falls back to the in-process window below when Redis is unavailable.
+    try:
+        from utils.cache import backend_name, rate_limit_allowed
+
+        if backend_name() != "memory":
+            return rate_limit_allowed(f"apikey:{prefix}", limit, 60)
+    except Exception:  # noqa: BLE001
+        pass
+
     now = time.monotonic()
     cutoff = now - _WINDOW_SECONDS
     with _hits_lock:

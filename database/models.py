@@ -763,3 +763,53 @@ class DataRequest(Base):
     detail: Mapped[Optional[str]] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+
+
+# ==========================================================================
+# v9.0 — Advanced AI Commerce + developer analytics
+# ==========================================================================
+
+
+class ProductVisualIndex(Base):
+    """A product's visual feature vector for image-based similarity search.
+
+    ``features`` stores a JSON descriptor (color histogram + perceptual hash by
+    default; a Gemini-Vision embedding when configured) that the visual-search
+    matcher compares against a query image.
+    """
+
+    __tablename__ = "product_visual_index"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "product_retailer_id", name="uq_visual_product"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(Integer, index=True, default=None)
+    product_retailer_id: Mapped[str] = mapped_column(String(128), index=True)
+    product_name: Mapped[Optional[str]] = mapped_column(String(512), default=None)
+    product_type: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    color: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    price: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), default=None)
+    image_url: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    url: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    embedder: Mapped[str] = mapped_column(String(32), default="histogram")
+    features: Mapped[Optional[str]] = mapped_column(Text, default=None)  # JSON
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class ApiUsage(Base):
+    """Per-key daily API usage rollup for the developer portal analytics."""
+
+    __tablename__ = "api_usage"
+    __table_args__ = (UniqueConstraint("prefix", "day", name="uq_api_usage_day"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    prefix: Mapped[str] = mapped_column(String(16), index=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)  # YYYY-MM-DD
+    count: Mapped[int] = mapped_column(Integer, default=0)
+    last_endpoint: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )

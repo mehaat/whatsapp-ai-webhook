@@ -1,6 +1,17 @@
-# ME-HAAT Fashion AI Bot v8.0 Enterprise Edition
+# ME-HAAT Fashion AI Bot v9.0 Enterprise Edition
 
-Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — full **Shopify OAuth**, catalog ordering, Shopify draft orders, payments, PDF invoices/labels, order tracking, coupons & gift cards, returns/RMA, shipping, CRM, support tickets, multi-user roles with 2FA, **Celery/Redis background processing**, **Prometheus/Grafana/Sentry monitoring**, a **developer portal with API keys**, **multi-tenant architecture**, **enterprise compliance** (GDPR export/erasure + tamper-evident audit), and Docker/CI deployment.
+Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — Shopify OAuth, catalog ordering, payments, invoices/labels, tracking, coupons/gift cards, returns, shipping, CRM, support, 2FA/RBAC, Celery/Redis, monitoring, multi-tenant, compliance, **Kubernetes/Helm**, and **Advanced AI Commerce** (visual product search, AI stylist, personal shopper, recommendation engine).
+
+## What's New in v9.0
+
+Additive over v8.0 — all prior features preserved; every new surface is guarded and feature-flagged.
+
+- **Advanced AI Commerce** — **Visual Product Search** (send a photo on WhatsApp → visually similar products, via an offline color-histogram + perceptual-hash matcher with a Gemini-Vision upgrade path), an **AI Stylist** (complete-the-look + occasion outfit suggestions for Indian ethnic wear), a **Personal Shopping Assistant** (guided budget/occasion/colour conversation), and a **Recommendation Engine** (frequently-bought-together, trending, and personalized picks from order history). Exposed on WhatsApp and via `/api/visual-search`, `/api/recommendations/*`, `/api/stylist/*`, plus an `/admin/ai` console and a Recommendations insights page.
+- **Developer Portal 2.0** — a comprehensive OpenAPI spec covering every endpoint, an enhanced `/developers` portal with curl/Python/JS code samples and webhook docs, and **per-key usage analytics** at `/admin/developer/analytics`.
+- **Deep Sentry + Redis cache/HA** — Sentry with Flask **and Celery** integrations, tracing, and release tagging; a Redis **cache abstraction** supporting single-node, **Sentinel (HA failover)**, and **Cluster**, with automatic in-memory fallback; and **shared Redis-backed API rate limiting** across workers.
+- **Kubernetes + Helm** — a full Helm chart (`deploy/helm/mehaat`) for web + Celery worker + beat, with Service, Ingress, HPA autoscaling, ConfigMap/Secret, PVC, PodDisruptionBudget, and an Alembic migration hook — plus raw `deploy/k8s/` manifests and `docs/KUBERNETES.md`.
+
+## What's New in v8.0
 
 ## What's New in v8.0
 

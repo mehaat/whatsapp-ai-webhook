@@ -1,52 +1,39 @@
 """
-commerce/api_docs.py
---------------------
-OpenAPI 3.0.3 specification and Swagger UI for the ME-HAAT Fashion
-Commerce API (v6.1).
+commerce/openapi_spec.py
+-------------------------
+The **comprehensive** OpenAPI 3.0.3 specification for the ME-HAAT Fashion
+Commerce API (v9.0 Developer Portal).
 
-This module exposes a single Flask blueprint, :data:`api_docs_bp`, with
-**absolute** route paths (no ``url_prefix``) so the host application can
-register it directly alongside :data:`commerce.api.commerce_api_bp`::
+This module supersedes the compact spec baked into :mod:`commerce.api_docs`.
+It documents *every* HTTP surface an integrator touches:
 
-    from commerce.api_docs import api_docs_bp
-    app.register_blueprint(api_docs_bp)
+    * ``POST /api/token``               — issue a bearer JWT (public).
+    * ``GET  /orders``                  — list orders (protected).
+    * ``GET  /orders/{ref}``            — fetch one order (protected).
+    * ``POST /orders/update``           — mutate an order (protected).
+    * ``GET  /tracking/{ref}``          — public tracking view.
+    * ``POST /payments/webhook/{provider}`` — provider webhook sink (public).
+    * ``GET  /developers``              — the developer portal landing page.
+    * ``GET  /api/docs``                — the Swagger UI page.
+    * ``GET  /api/openapi.json``        — this document.
 
-Routes
-    * ``GET /api/openapi.json`` — the machine-readable OpenAPI 3.0.3 spec
-      describing every endpoint of the commerce API.
-    * ``GET /api/docs``         — a self-contained HTML page that renders
-      Swagger UI (from the unpkg CDN) against the spec above.
-
-The spec is assembled in pure Python and serialized with
-:func:`flask.jsonify`; ``info.version`` is sourced dynamically from
-:data:`config.APP_VERSION` so the documentation always matches the running
-build.
+:func:`build_full_spec` is a **pure function** returning a plain ``dict``; it
+imports nothing from Flask so it can be serialized, diffed, snapshot-tested or
+served from any framework. ``info.version`` is sourced from
+:data:`config.version` so the published spec always matches the running build.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict
 
-from flask import Blueprint, Response, jsonify
-
-from config import APP_VERSION
-
-api_docs_bp = Blueprint("api_docs", __name__)
+from config import config
 
 #: The OpenAPI dialect this document conforms to.
 OPENAPI_VERSION = "3.0.3"
 
-#: URL the Swagger UI page fetches its spec from.
-_OPENAPI_JSON_PATH = "/api/openapi.json"
-
-#: Pinned Swagger UI distribution served from the unpkg CDN.
-_SWAGGER_UI_VERSION = "5"
-_SWAGGER_UI_CSS = (
-    f"https://unpkg.com/swagger-ui-dist@{_SWAGGER_UI_VERSION}/swagger-ui.css"
-)
-_SWAGGER_UI_BUNDLE = (
-    f"https://unpkg.com/swagger-ui-dist@{_SWAGGER_UI_VERSION}/swagger-ui-bundle.js"
-)
+#: Human-visible key prefix illustrating the ``X-API-Key`` shape.
+_API_KEY_EXAMPLE = "mh_live_abcd1234_s3cr3t-tail"
 
 
 # --------------------------------------------------------------------------
@@ -95,7 +82,7 @@ def _tracking_event_schema() -> Dict[str, Any]:
 
 
 def _order_schema() -> Dict[str, Any]:
-    """Schema for a serialized order (mirrors ``_order_to_dict``)."""
+    """Schema for a serialized order (mirrors ``commerce.service._order_to_dict``)."""
     return {
         "type": "object",
         "description": "A customer order with totals, status and (optionally) "
@@ -155,6 +142,90 @@ def _order_schema() -> Dict[str, Any]:
     }
 
 
+def _tracking_response_schema() -> Dict[str, Any]:
+    """Schema for the public tracking view payload."""
+    return {
+        "type": "object",
+        "description": "Public tracking summary for an order: current status, "
+                       "the canonical fulfilment pipeline and raw events.",
+        "properties": {
+            "order_number": {"type": "string", "example": "MH-2026-0001"},
+            "status": {"type": "string", "example": "shipped"},
+            "payment_status": {"type": "string", "example": "paid"},
+            "courier": {"type": "string", "nullable": True, "example": "Delhivery"},
+            "tracking_number": {"type": "string", "nullable": True,
+                                "example": "DLV123456789"},
+            "stages": {
+                "type": "array",
+                "description": "Canonical fulfilment pipeline annotated with state.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "stage": {"type": "string", "example": "shipped"},
+                        "state": {
+                            "type": "string",
+                            "enum": ["done", "current", "pending"],
+                            "example": "current",
+                        },
+                    },
+                },
+            },
+            "tracking": {
+                "type": "array",
+                "items": {"$ref": "#/components/schemas/TrackingEvent"},
+            },
+        },
+    }
+
+
+def _token_response_schema() -> Dict[str, Any]:
+    """Schema for the ``POST /api/token`` success body."""
+    return {
+        "type": "object",
+        "description": "A freshly minted bearer JWT and its lifetime.",
+        "properties": {
+            "token": {"type": "string",
+                      "description": "HS256 JWT to send as a Bearer token.",
+                      "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."},
+            "expires_in": {"type": "integer",
+                           "description": "Token time-to-live in seconds.",
+                           "example": 3600},
+        },
+        "required": ["token", "expires_in"],
+    }
+
+
+def _order_update_request_schema() -> Dict[str, Any]:
+    """Schema for the ``POST /orders/update`` request body."""
+    return {
+        "type": "object",
+        "description": "An order mutation: identify the order by id or "
+                       "order_number, then optionally drive a status transition "
+                       "and/or update editable fields.",
+        "required": ["order"],
+        "properties": {
+            "order": {"type": "string",
+                      "description": "Order id (all-digit) or order_number.",
+                      "example": "MH-2026-0001"},
+            "status": {"type": "string",
+                       "description": "New fulfilment status; records a tracking "
+                                      "event.",
+                       "example": "shipped"},
+            "courier": {"type": "string", "example": "Delhivery"},
+            "tracking_number": {"type": "string", "example": "DLV123456789"},
+            "location": {"type": "string", "example": "Jaipur Hub"},
+            "note": {"type": "string", "example": "Handed to courier"},
+            "customer_name": {"type": "string", "example": "Aditi Sharma"},
+            "city": {"type": "string", "example": "Jaipur"},
+            "state": {"type": "string", "example": "Rajasthan"},
+            "notes": {"type": "string"},
+            "discount": {"type": "number", "format": "float", "example": 0.0},
+            "shipping": {"type": "number", "format": "float", "example": 99.0},
+            "tax": {"type": "number", "format": "float", "example": 129.9},
+        },
+    }
+
+
 def _error_schema() -> Dict[str, Any]:
     """Schema for a JSON error body."""
     return {
@@ -168,16 +239,17 @@ def _error_schema() -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Reusable response fragments
+# Reusable response / parameter fragments
 # --------------------------------------------------------------------------
 
-def _error_response(description: str) -> Dict[str, Any]:
+def _error_response(description: str, example: str) -> Dict[str, Any]:
     """Build a JSON error response body for the given description."""
     return {
         "description": description,
         "content": {
             "application/json": {
                 "schema": {"$ref": "#/components/schemas/Error"},
+                "example": {"error": example},
             }
         },
     }
@@ -207,8 +279,10 @@ def _paths() -> Dict[str, Any]:
             "post": {
                 "tags": ["Auth"],
                 "summary": "Issue a bearer JWT",
-                "description": "Exchange admin credentials for a short-lived "
-                               "HS256 JWT usable as a Bearer token.",
+                "operationId": "issueToken",
+                "description": "Exchange admin credentials for a short-lived HS256 "
+                               "JWT usable as a Bearer token. This endpoint is "
+                               "public (no prior credential required).",
                 "security": [],
                 "requestBody": {
                     "required": True,
@@ -219,9 +293,11 @@ def _paths() -> Dict[str, Any]:
                                 "required": ["username", "password"],
                                 "properties": {
                                     "username": {"type": "string", "example": "admin"},
-                                    "password": {"type": "string", "format": "password"},
+                                    "password": {"type": "string", "format": "password",
+                                                 "example": "s3cr3t"},
                                 },
-                            }
+                            },
+                            "example": {"username": "admin", "password": "s3cr3t"},
                         }
                     },
                 },
@@ -230,21 +306,14 @@ def _paths() -> Dict[str, Any]:
                         "description": "Token issued.",
                         "content": {
                             "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "token": {"type": "string"},
-                                        "expires_in": {"type": "integer",
-                                                       "description": "Token TTL "
-                                                                      "in seconds.",
-                                                       "example": 3600},
-                                    },
-                                }
+                                "schema": {"$ref": "#/components/schemas/TokenResponse"},
+                                "example": {"token": "eyJhbGciOi...", "expires_in": 3600},
                             }
                         },
                     },
-                    "401": _error_response("Invalid credentials."),
-                    "503": _error_response("Token signing unavailable."),
+                    "401": _error_response("Invalid credentials.", "invalid_credentials"),
+                    "500": _error_response("Internal error.", "internal_error"),
+                    "503": _error_response("Token signing unavailable.", "token_unavailable"),
                 },
             }
         },
@@ -252,15 +321,18 @@ def _paths() -> Dict[str, Any]:
             "get": {
                 "tags": ["Orders"],
                 "summary": "List orders",
+                "operationId": "listOrders",
                 "description": "Return orders matching the supplied filters. "
-                               "Requires authentication.",
+                               "Requires a Bearer JWT or an X-API-Key.",
                 "security": [{"bearerAuth": []}, {"apiKeyAuth": []}],
                 "parameters": [
                     {"name": "status", "in": "query", "required": False,
                      "schema": {"type": "string"},
+                     "example": "shipped",
                      "description": "Filter by fulfilment status."},
                     {"name": "payment_status", "in": "query", "required": False,
                      "schema": {"type": "string"},
+                     "example": "paid",
                      "description": "Filter by payment status."},
                     {"name": "q", "in": "query", "required": False,
                      "schema": {"type": "string"},
@@ -268,9 +340,11 @@ def _paths() -> Dict[str, Any]:
                                     "wa_number and customer_name."},
                     {"name": "date_from", "in": "query", "required": False,
                      "schema": {"type": "string", "format": "date"},
+                     "example": "2026-07-01",
                      "description": "Inclusive lower bound (YYYY-MM-DD)."},
                     {"name": "date_to", "in": "query", "required": False,
                      "schema": {"type": "string", "format": "date"},
+                     "example": "2026-07-31",
                      "description": "Inclusive upper bound (YYYY-MM-DD)."},
                     {"name": "limit", "in": "query", "required": False,
                      "schema": {"type": "integer", "default": 50,
@@ -290,7 +364,8 @@ def _paths() -> Dict[str, Any]:
                                     "properties": {
                                         "count": {"type": "integer",
                                                   "description": "Total matching "
-                                                                 "the filters."},
+                                                                 "the filters.",
+                                                  "example": 128},
                                         "results": {
                                             "type": "array",
                                             "items": {"$ref":
@@ -301,8 +376,9 @@ def _paths() -> Dict[str, Any]:
                             }
                         },
                     },
-                    "401": _error_response("Authentication required."),
-                    "500": _error_response("Internal error."),
+                    "401": _error_response("Authentication required.", "unauthorized"),
+                    "429": _error_response("Rate limit exceeded.", "rate_limited"),
+                    "500": _error_response("Internal error.", "internal_error"),
                 },
             }
         },
@@ -310,9 +386,10 @@ def _paths() -> Dict[str, Any]:
             "get": {
                 "tags": ["Orders"],
                 "summary": "Fetch one order",
+                "operationId": "getOrder",
                 "description": "Return a single order (resolved by id or "
                                "order_number) with items and tracking history. "
-                               "Requires authentication.",
+                               "Requires a Bearer JWT or an X-API-Key.",
                 "security": [{"bearerAuth": []}, {"apiKeyAuth": []}],
                 "parameters": [_ref_param()],
                 "responses": {
@@ -324,9 +401,10 @@ def _paths() -> Dict[str, Any]:
                             }
                         },
                     },
-                    "401": _error_response("Authentication required."),
-                    "404": _error_response("Order not found."),
-                    "500": _error_response("Internal error."),
+                    "401": _error_response("Authentication required.", "unauthorized"),
+                    "404": _error_response("Order not found.", "not_found"),
+                    "429": _error_response("Rate limit exceeded.", "rate_limited"),
+                    "500": _error_response("Internal error.", "internal_error"),
                 },
             }
         },
@@ -334,43 +412,23 @@ def _paths() -> Dict[str, Any]:
             "post": {
                 "tags": ["Orders"],
                 "summary": "Update an order",
+                "operationId": "updateOrder",
                 "description": "Drive a status transition and/or update editable "
-                               "fields on an order. Requires authentication.",
+                               "fields on an order. Requires a Bearer JWT or an "
+                               "X-API-Key.",
                 "security": [{"bearerAuth": []}, {"apiKeyAuth": []}],
                 "requestBody": {
                     "required": True,
                     "content": {
                         "application/json": {
-                            "schema": {
-                                "type": "object",
-                                "required": ["order"],
-                                "properties": {
-                                    "order": {"type": "string",
-                                              "description": "Order id or "
-                                                             "order_number.",
-                                              "example": "MH-2026-0001"},
-                                    "status": {"type": "string",
-                                               "description": "New fulfilment "
-                                                              "status; records a "
-                                                              "tracking event.",
-                                               "example": "shipped"},
-                                    "courier": {"type": "string",
-                                                "example": "Delhivery"},
-                                    "tracking_number": {"type": "string",
-                                                        "example": "DLV123456789"},
-                                    "location": {"type": "string",
-                                                 "example": "Jaipur Hub"},
-                                    "note": {"type": "string",
-                                             "example": "Handed to courier"},
-                                    "customer_name": {"type": "string"},
-                                    "city": {"type": "string"},
-                                    "state": {"type": "string"},
-                                    "notes": {"type": "string"},
-                                    "discount": {"type": "number", "format": "float"},
-                                    "shipping": {"type": "number", "format": "float"},
-                                    "tax": {"type": "number", "format": "float"},
-                                },
-                            }
+                            "schema": {"$ref":
+                                       "#/components/schemas/OrderUpdateRequest"},
+                            "example": {
+                                "order": "MH-2026-0001",
+                                "status": "shipped",
+                                "courier": "Delhivery",
+                                "tracking_number": "DLV123456789",
+                            },
                         }
                     },
                 },
@@ -383,10 +441,11 @@ def _paths() -> Dict[str, Any]:
                             }
                         },
                     },
-                    "400": _error_response("Missing order reference."),
-                    "401": _error_response("Authentication required."),
-                    "404": _error_response("Order not found."),
-                    "500": _error_response("Internal error."),
+                    "400": _error_response("Missing order reference.", "missing_order_ref"),
+                    "401": _error_response("Authentication required.", "unauthorized"),
+                    "404": _error_response("Order not found.", "not_found"),
+                    "429": _error_response("Rate limit exceeded.", "rate_limited"),
+                    "500": _error_response("Internal error.", "internal_error"),
                 },
             }
         },
@@ -394,6 +453,7 @@ def _paths() -> Dict[str, Any]:
             "get": {
                 "tags": ["Tracking"],
                 "summary": "Public order tracking",
+                "operationId": "trackOrder",
                 "description": "Public (unauthenticated) tracking view: summarized "
                                "status, the canonical stage pipeline and raw "
                                "tracking events.",
@@ -404,46 +464,13 @@ def _paths() -> Dict[str, Any]:
                         "description": "The tracking summary.",
                         "content": {
                             "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "order_number": {"type": "string"},
-                                        "status": {"type": "string"},
-                                        "payment_status": {"type": "string"},
-                                        "courier": {"type": "string",
-                                                    "nullable": True},
-                                        "tracking_number": {"type": "string",
-                                                            "nullable": True},
-                                        "stages": {
-                                            "type": "array",
-                                            "description": "Canonical fulfilment "
-                                                           "pipeline.",
-                                            "items": {
-                                                "type": "object",
-                                                "properties": {
-                                                    "stage": {"type": "string",
-                                                              "example": "shipped"},
-                                                    "state": {
-                                                        "type": "string",
-                                                        "enum": ["done", "current",
-                                                                 "pending"],
-                                                    },
-                                                },
-                                            },
-                                        },
-                                        "tracking": {
-                                            "type": "array",
-                                            "items": {"$ref":
-                                                      "#/components/schemas/"
-                                                      "TrackingEvent"},
-                                        },
-                                    },
-                                }
+                                "schema": {"$ref":
+                                           "#/components/schemas/TrackingResponse"},
                             }
                         },
                     },
-                    "404": _error_response("Order not found."),
-                    "500": _error_response("Internal error."),
+                    "404": _error_response("Order not found.", "not_found"),
+                    "500": _error_response("Internal error.", "internal_error"),
                 },
             }
         },
@@ -451,6 +478,7 @@ def _paths() -> Dict[str, Any]:
             "post": {
                 "tags": ["Payments"],
                 "summary": "Payment provider webhook",
+                "operationId": "paymentWebhook",
                 "description": "Public webhook sink for payment providers. Each "
                                "provider adapter verifies its own signature; the "
                                "endpoint always acks with HTTP 200 to avoid retry "
@@ -467,6 +495,7 @@ def _paths() -> Dict[str, Any]:
                             "enum": ["razorpay", "stripe", "cashfree",
                                      "phonepe", "manual_upi"],
                         },
+                        "example": "razorpay",
                     }
                 ],
                 "requestBody": {
@@ -483,12 +512,61 @@ def _paths() -> Dict[str, Any]:
                                 "schema": {
                                     "type": "object",
                                     "properties": {
-                                        "ok": {"type": "boolean"},
-                                        "status": {"type": "string"},
+                                        "ok": {"type": "boolean", "example": True},
+                                        "status": {"type": "string", "example": "paid"},
                                     },
-                                }
+                                },
+                                "example": {"ok": True, "status": "paid"},
                             }
                         },
+                    }
+                },
+            }
+        },
+        "/developers": {
+            "get": {
+                "tags": ["Developer"],
+                "summary": "Developer portal landing page",
+                "operationId": "developerPortal",
+                "description": "Human-facing developer portal (HTML): quick start, "
+                               "authentication, code samples and endpoint reference.",
+                "security": [],
+                "responses": {
+                    "200": {
+                        "description": "The developer portal HTML page.",
+                        "content": {"text/html": {"schema": {"type": "string"}}},
+                    },
+                    "404": {"description": "Developer portal disabled."},
+                },
+            }
+        },
+        "/api/docs": {
+            "get": {
+                "tags": ["Developer"],
+                "summary": "Swagger UI",
+                "operationId": "swaggerUi",
+                "description": "Interactive Swagger UI rendered against "
+                               "/api/openapi.json.",
+                "security": [],
+                "responses": {
+                    "200": {
+                        "description": "The Swagger UI HTML page.",
+                        "content": {"text/html": {"schema": {"type": "string"}}},
+                    }
+                },
+            }
+        },
+        "/api/openapi.json": {
+            "get": {
+                "tags": ["Developer"],
+                "summary": "OpenAPI specification",
+                "operationId": "openapiJson",
+                "description": "This machine-readable OpenAPI 3.0.3 document.",
+                "security": [],
+                "responses": {
+                    "200": {
+                        "description": "The OpenAPI 3.0.3 document.",
+                        "content": {"application/json": {"schema": {"type": "object"}}},
                     }
                 },
             }
@@ -496,29 +574,42 @@ def _paths() -> Dict[str, Any]:
     }
 
 
-def build_openapi_spec() -> Dict[str, Any]:
+def build_full_spec() -> Dict[str, Any]:
     """Construct the complete OpenAPI 3.0.3 document as a Python dict.
 
-    ``info.version`` is sourced from :data:`config.APP_VERSION` so the
-    published spec always matches the running build.
+    Pure and side-effect free: no Flask, no I/O. ``info.version`` is sourced
+    from :data:`config.version` so the published spec always matches the
+    running build.
     """
+    try:
+        version = config.version
+    except Exception:  # noqa: BLE001 - version lookup must never break the spec
+        version = "0.0.0"
+
     return {
         "openapi": OPENAPI_VERSION,
         "info": {
             "title": "ME-HAAT Fashion Commerce API",
-            "version": APP_VERSION,
-            "description": "JSON order, tracking and payment-webhook API for the "
-                           "ME-HAAT Fashion AI Bot. Protected endpoints accept "
-                           "either a Bearer JWT (from POST /api/token) or an "
-                           "X-API-Key header; tracking and payment webhooks are "
-                           "public.",
+            "version": version,
+            "description": (
+                "JSON order, tracking and payment-webhook API for the ME-HAAT "
+                "Fashion AI Bot.\n\n"
+                "**Authentication.** Protected endpoints accept either a Bearer "
+                "JWT (from `POST /api/token`) or a developer API key sent in the "
+                "`X-API-Key` header (keys look like `mh_live_...`). Order "
+                "tracking, payment webhooks and token issuance are public.\n\n"
+                "**Rate limits.** Each API key carries its own per-minute budget "
+                "(default 120 req/min); exceeding it returns `429`."
+            ),
+            "contact": {"name": "ME-HAAT Developer Support"},
         },
-        "servers": [{"url": "/"}],
+        "servers": [{"url": "/", "description": "This deployment host."}],
         "tags": [
             {"name": "Auth", "description": "Token issuance."},
             {"name": "Orders", "description": "Order listing and mutation."},
             {"name": "Tracking", "description": "Public order tracking."},
             {"name": "Payments", "description": "Provider webhooks."},
+            {"name": "Developer", "description": "Portal, docs and spec."},
         ],
         "paths": _paths(),
         "components": {
@@ -533,78 +624,18 @@ def build_openapi_spec() -> Dict[str, Any]:
                     "type": "apiKey",
                     "in": "header",
                     "name": "X-API-Key",
-                    "description": "Static API key sent in the X-API-Key header.",
+                    "description": "Developer API key sent in the X-API-Key "
+                                   f"header, e.g. `{_API_KEY_EXAMPLE}`.",
                 },
             },
             "schemas": {
                 "Order": _order_schema(),
                 "OrderItem": _order_item_schema(),
                 "TrackingEvent": _tracking_event_schema(),
+                "TrackingResponse": _tracking_response_schema(),
                 "Error": _error_schema(),
+                "TokenResponse": _token_response_schema(),
+                "OrderUpdateRequest": _order_update_request_schema(),
             },
         },
     }
-
-
-# --------------------------------------------------------------------------
-# Swagger UI HTML
-# --------------------------------------------------------------------------
-
-def _swagger_ui_html() -> str:
-    """Return a self-contained Swagger UI HTML page bound to the spec."""
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ME-HAAT Fashion Commerce API</title>
-  <link rel="stylesheet" href="{_SWAGGER_UI_CSS}">
-  <style>
-    body {{ margin: 0; background: #fafafa; }}
-  </style>
-</head>
-<body>
-  <div id="swagger-ui"></div>
-  <script src="{_SWAGGER_UI_BUNDLE}" crossorigin></script>
-  <script>
-    window.onload = function () {{
-      window.ui = SwaggerUIBundle({{
-        url: "{_OPENAPI_JSON_PATH}",
-        dom_id: "#swagger-ui",
-        deepLinking: true,
-        presets: [
-          SwaggerUIBundle.presets.apis,
-          SwaggerUIBundle.SwaggerUIStandalonePreset
-        ],
-        layout: "BaseLayout"
-      }});
-    }};
-  </script>
-</body>
-</html>
-"""
-
-
-# --------------------------------------------------------------------------
-# Routes
-# --------------------------------------------------------------------------
-
-@api_docs_bp.route("/api/openapi.json", methods=["GET"])
-def openapi_json() -> Response:
-    """Serve the OpenAPI 3.0.3 specification as JSON.
-
-    v9.0 serves the comprehensive spec (all endpoints) when available, falling
-    back to the original spec builder.
-    """
-    try:
-        from commerce.openapi_spec import build_full_spec
-
-        return jsonify(build_full_spec())
-    except Exception:  # noqa: BLE001
-        return jsonify(build_openapi_spec())
-
-
-@api_docs_bp.route("/api/docs", methods=["GET"])
-def api_docs() -> Response:
-    """Serve the Swagger UI documentation page."""
-    return Response(_swagger_ui_html(), mimetype="text/html")

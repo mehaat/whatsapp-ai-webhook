@@ -16,6 +16,7 @@
       --accent-2: #8b7bff;
       --code-bg: #0a0e14;
       --good: #3fb950;
+      --warn: #d29922;
     }
     * { box-sizing: border-box; }
     body {
@@ -28,7 +29,7 @@
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
     code, pre, .mono { font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace; }
-    .wrap { max-width: 880px; margin: 0 auto; padding: 48px 24px 80px; }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 48px 24px 80px; }
     header.hero {
       border-bottom: 1px solid var(--border);
       padding-bottom: 28px;
@@ -46,7 +47,7 @@
       margin-bottom: 14px;
     }
     h1 { font-size: 2rem; margin: 0 0 8px; }
-    h2 { font-size: 1.3rem; margin: 40px 0 12px; padding-top: 8px; }
+    h2 { font-size: 1.3rem; margin: 44px 0 12px; padding-top: 8px; }
     h3 { font-size: 1rem; margin: 22px 0 8px; color: var(--muted); }
     p.lead { color: var(--muted); font-size: 1.05rem; margin: 0; }
     .muted { color: var(--muted); }
@@ -65,7 +66,8 @@
       border-radius: 10px;
       padding: 16px 18px;
       overflow-x: auto;
-      font-size: 0.88rem;
+      font-size: 0.86rem;
+      margin: 0;
     }
     code.inline {
       background: var(--panel-2);
@@ -98,7 +100,51 @@
       border-radius: 0 8px 8px 0;
       color: var(--muted);
     }
+    /* Tabbed code samples (pure CSS, radio-driven) */
+    .tabs { margin: 12px 0; }
+    .tabs input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
+    .tab-labels { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: -1px; }
+    .tab-labels label {
+      cursor: pointer;
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      border-bottom: none;
+      border-radius: 8px 8px 0 0;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .tab-panels {
+      border: 1px solid var(--border);
+      border-radius: 0 10px 10px 10px;
+      overflow: hidden;
+    }
+    .tab-panel { display: none; }
+    .tab-panel pre { border: none; border-radius: 0; }
+    /* Panel 1..3 selected by the matching radio */
+    .tabs input:nth-of-type(1):checked ~ .tab-panels .tab-panel:nth-of-type(1),
+    .tabs input:nth-of-type(2):checked ~ .tab-panels .tab-panel:nth-of-type(2),
+    .tabs input:nth-of-type(3):checked ~ .tab-panels .tab-panel:nth-of-type(3) {
+      display: block;
+    }
+    .tabs input:nth-of-type(1):checked ~ .tab-labels label:nth-of-type(1),
+    .tabs input:nth-of-type(2):checked ~ .tab-labels label:nth-of-type(2),
+    .tabs input:nth-of-type(3):checked ~ .tab-labels label:nth-of-type(3) {
+      background: var(--code-bg);
+      color: var(--text);
+      border-color: var(--border);
+    }
+    .pill {
+      display: inline-block; font-size: 0.72rem; padding: 1px 9px; border-radius: 999px;
+      border: 1px solid var(--border); color: var(--muted);
+    }
+    .pill.pub { color: var(--good); border-color: rgba(63,185,80,0.4); }
+    .pill.auth { color: var(--warn); border-color: rgba(210,153,34,0.4); }
     footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.85rem; }
+    ul.changelog { list-style: none; padding: 0; margin: 8px 0; }
+    ul.changelog li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+    ul.changelog .v { color: var(--accent-2); font-weight: 700; margin-right: 8px; }
   </style>
 </head>
 <body>
@@ -108,7 +154,8 @@
     <span class="badge">Developer Portal{% if version %} · v{{ version }}{% endif %}</span>
     <h1>ME-HAAT Fashion Commerce API</h1>
     <p class="lead">Programmatic access to orders, tracking and payment webhooks for the
-    ME-HAAT Fashion AI Bot. JSON over HTTPS, authenticated with a Bearer JWT or an API key.</p>
+    ME-HAAT Fashion AI Bot. JSON over HTTPS, authenticated with a Bearer JWT or an
+    <code class="inline">X-API-Key</code>.</p>
     <div style="margin-top:18px">
       <a class="btn" href="/api/docs">Interactive API Docs (Swagger)</a>
       <a class="btn ghost" href="/api/openapi.json">OpenAPI Spec (JSON)</a>
@@ -118,10 +165,12 @@
   <h2>Base URL</h2>
   <p>All endpoints are served relative to your deployment host:</p>
   <pre class="mono">https://YOUR-HOST/</pre>
+  <p class="muted">Replace <code class="inline">YOUR-HOST</code> throughout this page with your
+  actual deployment domain.</p>
 
   <h2>Authentication</h2>
   <p>Protected endpoints accept either of two credentials. Public endpoints
-  (order tracking and payment webhooks) require none.</p>
+  (order tracking, payment webhooks and token issuance) require none.</p>
 
   <div class="grid">
     <div class="card">
@@ -139,45 +188,156 @@
     </div>
   </div>
 
-  <h2>Quick start</h2>
-  <p>Fetch a token, then list orders. Or skip the token and use an API key directly:</p>
-  <pre class="mono"># Option A — Bearer JWT
-TOKEN=$(curl -s -X POST https://YOUR-HOST/api/token \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"••••••"}' | jq -r .token)
-
-curl https://YOUR-HOST/orders \
-  -H "Authorization: Bearer $TOKEN"
-
-# Option B — API key
-curl https://YOUR-HOST/orders \
-  -H "X-API-Key: mh_live_abcd1234_your-secret-here"</pre>
-
   <h2>Rate limits</h2>
   <div class="note">
     Each API key carries its own per-minute request budget (default
     <strong>120 requests/minute</strong>), enforced with a sliding one-minute window.
-    Exceeding it returns <code class="inline">429 Too Many Requests</code>; retry after
-    the window rolls forward. JWT and admin-session traffic are not key-limited.
+    Exceeding it returns <code class="inline">429 Too Many Requests</code> with body
+    <code class="inline">{"error":"rate_limited"}</code>; retry once the window rolls
+    forward. JWT and admin-session traffic are not key-limited.
   </div>
 
-  <h2>Key endpoints</h2>
+  <h2>Endpoints</h2>
   <div class="card" style="padding:6px 22px">
     <table>
       <thead>
         <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
       </thead>
       <tbody>
-        <tr><td class="method m-get">GET</td><td class="mono">/orders</td><td>List orders with filters &amp; pagination.</td><td class="muted">Required</td></tr>
-        <tr><td class="method m-get">GET</td><td class="mono">/orders/{ref}</td><td>Fetch one order (id or order_number) with items &amp; tracking.</td><td class="muted">Required</td></tr>
-        <tr><td class="method m-post">POST</td><td class="mono">/orders/update</td><td>Drive a status transition / update editable fields.</td><td class="muted">Required</td></tr>
-        <tr><td class="method m-get">GET</td><td class="mono">/tracking/{ref}</td><td>Public order tracking summary &amp; event history.</td><td class="muted">Public</td></tr>
-        <tr><td class="method m-post">POST</td><td class="mono">/payments/webhook/{provider}</td><td>Payment provider webhook sink (always acks 200).</td><td class="muted">Public</td></tr>
+        <tr><td class="method m-post">POST</td><td class="mono">/api/token</td><td>Exchange admin credentials for a bearer JWT.</td><td><span class="pill pub">Public</span></td></tr>
+        <tr><td class="method m-get">GET</td><td class="mono">/orders</td><td>List orders with filters &amp; pagination.</td><td><span class="pill auth">Required</span></td></tr>
+        <tr><td class="method m-get">GET</td><td class="mono">/orders/{ref}</td><td>Fetch one order (id or order_number) with items &amp; tracking.</td><td><span class="pill auth">Required</span></td></tr>
+        <tr><td class="method m-post">POST</td><td class="mono">/orders/update</td><td>Drive a status transition / update editable fields.</td><td><span class="pill auth">Required</span></td></tr>
+        <tr><td class="method m-get">GET</td><td class="mono">/tracking/{ref}</td><td>Public order tracking summary &amp; event history.</td><td><span class="pill pub">Public</span></td></tr>
+        <tr><td class="method m-post">POST</td><td class="mono">/payments/webhook/{provider}</td><td>Payment provider webhook sink (always acks 200).</td><td><span class="pill pub">Public</span></td></tr>
       </tbody>
     </table>
   </div>
   <p class="muted">See the <a href="/api/docs">interactive docs</a> for full request/response
   schemas, query parameters and examples.</p>
+
+  <h2>Code samples</h2>
+  <p>Pick your language. Each example gets a token, lists orders with it, and tracks an order.</p>
+
+  <div class="tabs">
+    <input type="radio" name="lang" id="lang-curl" checked />
+    <input type="radio" name="lang" id="lang-py" />
+    <input type="radio" name="lang" id="lang-js" />
+    <div class="tab-labels">
+      <label for="lang-curl">curl</label>
+      <label for="lang-py">Python (requests)</label>
+      <label for="lang-js">JavaScript (fetch)</label>
+    </div>
+    <div class="tab-panels">
+      <!-- curl -->
+      <div class="tab-panel">
+<pre class="mono"># 1) Get a bearer token
+TOKEN=$(curl -s -X POST https://YOUR-HOST/api/token \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"••••••"}' | jq -r .token)
+
+# 2) List orders with the token
+curl https://YOUR-HOST/orders?status=shipped&limit=20 \
+  -H "Authorization: Bearer $TOKEN"
+
+# ...or use an API key directly instead of a token:
+curl https://YOUR-HOST/orders \
+  -H "X-API-Key: mh_live_abcd1234_your-secret-here"
+
+# 3) Track an order (public — no auth)
+curl https://YOUR-HOST/tracking/MH-2026-0001</pre>
+      </div>
+      <!-- Python -->
+      <div class="tab-panel">
+<pre class="mono">import requests
+
+BASE = "https://YOUR-HOST"
+
+# 1) Get a bearer token
+resp = requests.post(f"{BASE}/api/token", json={
+    "username": "admin",
+    "password": "••••••",
+})
+token = resp.json()["token"]
+
+# 2) List orders with the token
+orders = requests.get(
+    f"{BASE}/orders",
+    params={"status": "shipped", "limit": 20},
+    headers={"Authorization": f"Bearer {token}"},
+).json()
+print(orders["count"], "orders")
+
+# ...or authenticate with an API key instead:
+# headers = {"X-API-Key": "mh_live_abcd1234_your-secret-here"}
+
+# 3) Track an order (public — no auth)
+tracking = requests.get(f"{BASE}/tracking/MH-2026-0001").json()
+print(tracking["status"], tracking["stages"])</pre>
+      </div>
+      <!-- JavaScript -->
+      <div class="tab-panel">
+<pre class="mono">const BASE = "https://YOUR-HOST";
+
+// 1) Get a bearer token
+const tokenResp = await fetch(`${BASE}/api/token`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ username: "admin", password: "••••••" }),
+});
+const { token } = await tokenResp.json();
+
+// 2) List orders with the token
+const orders = await fetch(`${BASE}/orders?status=shipped&limit=20`, {
+  headers: { Authorization: `Bearer ${token}` },
+}).then((r) => r.json());
+console.log(orders.count, "orders");
+
+// ...or authenticate with an API key instead:
+// headers: { "X-API-Key": "mh_live_abcd1234_your-secret-here" }
+
+// 3) Track an order (public — no auth)
+const tracking = await fetch(`${BASE}/tracking/MH-2026-0001`).then((r) => r.json());
+console.log(tracking.status, tracking.stages);</pre>
+      </div>
+    </div>
+  </div>
+
+  <h2>Webhooks</h2>
+  <p>Payment providers deliver events to a public, per-provider sink. Providers cannot
+  present our JWT, so the endpoint is unauthenticated — each provider adapter verifies its
+  own signature. The endpoint <strong>always</strong> responds <code class="inline">200</code>
+  (even on verification failure) to prevent provider retry storms.</p>
+  <div class="card">
+    <h3><span class="method m-post">POST</span> <span class="mono">/payments/webhook/{provider}</span></h3>
+    <p class="muted"><code class="inline">provider</code> is one of
+    <code class="inline">razorpay</code>, <code class="inline">stripe</code>,
+    <code class="inline">cashfree</code>, <code class="inline">phonepe</code>,
+    <code class="inline">manual_upi</code>. Send the provider's raw payload and signature
+    headers; a paid event flips the order to <code class="inline">paid</code>.</p>
+<pre class="mono"># Example acknowledgement body
+{ "ok": true, "status": "paid" }</pre>
+  </div>
+
+  <h2>Reference &amp; tooling</h2>
+  <p>
+    <a class="btn" href="/api/docs">Swagger UI</a>
+    <a class="btn ghost" href="/api/openapi.json">OpenAPI 3.0.3 spec (JSON)</a>
+  </p>
+  <p class="muted">Import the OpenAPI spec into Postman, Insomnia or any generator to scaffold
+  a typed client.</p>
+
+  <h2>Changelog</h2>
+  <ul class="changelog">
+    <li><span class="v">v9.0</span> Enhanced developer portal: language-tabbed code samples,
+      full endpoint reference, webhook contract and per-key usage analytics.</li>
+    <li><span class="v">v8.0</span> Developer API keys (<code class="inline">mh_live_…</code>)
+      with per-key rate limits, issued from the admin dashboard.</li>
+    <li><span class="v">v6.1</span> Interactive Swagger UI at
+      <code class="inline">/api/docs</code> and the machine-readable
+      <code class="inline">/api/openapi.json</code> spec.</li>
+    <li><span class="v">v6.0</span> Initial JSON order, tracking and payment-webhook API.</li>
+  </ul>
 
   <footer>
     ME-HAAT Fashion AI Bot{% if version %} · v{{ version }}{% endif %} · Developer Portal.

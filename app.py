@@ -1,10 +1,10 @@
 """
 app.py
 ------
-ME-HAAT Fashion AI Bot v8.0 Enterprise Edition
+ME-HAAT Fashion AI Bot v9.0 Enterprise Edition
 Production WhatsApp AI Sales Assistant + Commerce Platform — Shopify OAuth Edition.
-v8.0 adds Celery/Redis processing, Prometheus/Grafana/Sentry monitoring, a
-developer portal with API keys, multi-tenant architecture, and compliance tooling.
+v9.0 adds a developer portal 2.0, deep Sentry + Redis cache/HA, Kubernetes/Helm,
+and Advanced AI Commerce (visual search, AI stylist, personal shopper, recommender).
 
 Entry point for the Flask application. Wires together:
     - shopify.auth   : OAuth install/callback routes
@@ -50,7 +50,12 @@ from utils.logging import logger
 from utils.ratelimit import RateLimiter
 from utils.security import contains_injection_attempt, sanitize_input
 from whatsapp.sender import send_products, send_text_message
-from whatsapp.webhook import init_order_webhook, init_webhook, whatsapp_webhook_bp
+from whatsapp.webhook import (
+    init_image_webhook,
+    init_order_webhook,
+    init_webhook,
+    whatsapp_webhook_bp,
+)
 
 # Admin dashboard (additive module). The import is guarded so that, exactly like
 # the optional database layer, a problem inside the dashboard can never prevent
@@ -109,9 +114,17 @@ register_middleware(app)
 # v7.0 observability: optional Sentry error monitoring (no-op unless SENTRY_DSN).
 try:
     from flask import g as _g
-    from utils.observability import incr, init_sentry
+    from utils.observability import incr
 
-    init_sentry()
+    # v9.0: richer Sentry (Flask + Celery integrations, tracing, release).
+    try:
+        from utils.sentry_ext import init_sentry
+
+        init_sentry(app)
+    except Exception:  # noqa: BLE001 - fall back to the basic hook
+        from utils.observability import init_sentry as _basic_sentry
+
+        _basic_sentry()
 
     @app.before_request
     def _obs_start():  # noqa: ANN001
@@ -179,6 +192,12 @@ try:
         ("Developer portal / API keys", _bp("admin.developer_routes", "admin_developer_bp")),
         ("Compliance / audit", _bp("admin.compliance_routes", "admin_compliance_bp")),
         ("Developer portal (public)", _bp("commerce.dev_portal", "dev_portal_bp")),
+        # v9.0 surfaces.
+        ("API usage analytics", _bp("admin.api_analytics_routes", "admin_api_analytics_bp")),
+        ("Recommendation insights", _bp("admin.insights_routes", "admin_insights_bp")),
+        ("AI commerce console", _bp("admin.ai_commerce_routes", "admin_ai_commerce_bp")),
+        ("Recommendations API", _bp("commerce.reco_api", "reco_api_bp")),
+        ("AI commerce API", _bp("commerce.ai_commerce_api", "ai_commerce_api_bp")),
     ):
         try:
             app.register_blueprint(_importer())
@@ -301,6 +320,65 @@ def _format_tracking_reply(order: dict) -> str:
     return "\n".join(lines)
 
 
+def handle_image_message(message: dict, profile_name: str) -> None:
+    """Handle an inbound WhatsApp image via v9.0 visual product search."""
+    wa_number = message.get("from", "")
+    if not config.visual_search_enabled:
+        send_text_message(
+            wa_number,
+            "Thanks for the photo! Please describe what you're looking for in words "
+            "(e.g. 'red silk saree under 3000') and I'll find matches.",
+        )
+        return
+    try:
+        media_id = (message.get("image", {}) or {}).get("id", "")
+        from whatsapp.media import download_media
+
+        image_bytes = download_media(media_id)
+        if not image_bytes:
+            send_text_message(
+                wa_number,
+                "I couldn't open that image. Please try resending it, or describe what "
+                "you're looking for and I'll search by text.",
+            )
+            return
+        from commerce.visual_search import search_by_image
+
+        tenant_id = None
+        try:
+            from commerce.tenancy import current_tenant_id
+
+            tenant_id = current_tenant_id()
+        except Exception:  # noqa: BLE001
+            tenant_id = None
+        results = search_by_image(image_bytes, top_k=5, tenant_id=tenant_id)
+        if not results:
+            send_text_message(
+                wa_number,
+                "I couldn't find a close visual match yet. Try describing the item "
+                "(fabric, colour, occasion) and I'll search our catalogue.",
+            )
+            return
+        cards = [
+            {
+                "product_id": r.get("product_retailer_id"),
+                "retailer_id": r.get("product_retailer_id"),
+                "title": r.get("product_name") or "Similar product",
+                "price": r.get("price"),
+                "url": r.get("url"),
+            }
+            for r in results
+        ]
+        send_products(wa_number, cards, header="Here are visually similar pieces 👗")
+    except Exception as exc:  # noqa: BLE001 - never crash the webhook
+        logger.error("IMAGE | visual search failed for %s: %s", wa_number, exc)
+        send_text_message(
+            wa_number,
+            "Something went wrong reading that image. Please describe what you'd like "
+            "and I'll help you find it.",
+        )
+
+
 def _try_commerce_reply(wa_number: str, text: str) -> bool:
     """Handle v6 commerce conversational intents (order tracking).
 
@@ -364,6 +442,39 @@ def _try_commerce_reply(wa_number: str, text: str) -> bool:
                 f"{order['order_number']}. Our team will review and update you soon.",
             )
             return True
+
+        # v9.0: recommendation + stylist intents (keyword-gated so they don't
+        # hijack normal product search).
+        low = (text or "").lower()
+        if config.recommendations_enabled and any(
+            kw in low for kw in ("recommend", "suggest", "what should i buy", "aur dikhao similar",
+                                 "similar", "you may like", "kya lena chahiye")
+        ):
+            from commerce.recommendations import recommend_for_whatsapp
+
+            recs = recommend_for_whatsapp(wa_number, limit=5)
+            if recs:
+                cards = [
+                    {"product_id": r.get("product_retailer_id"),
+                     "retailer_id": r.get("product_retailer_id"),
+                     "title": r.get("product_name") or "Recommended",
+                     "price": r.get("price")}
+                    for r in recs
+                ]
+                send_products(wa_number, cards, header="You might also love these ✨")
+                return True
+
+        if config.ai_stylist_enabled and any(
+            kw in low for kw in ("what should i wear", "style me", "styling", "which blouse",
+                                 "match with", "kya pehnu", "outfit", "personal shopper",
+                                 "help me pick", "occasion")
+        ):
+            from commerce.personal_shopper import advise
+
+            reply = advise(wa_number, text or "")
+            if reply:
+                send_text_message(wa_number, reply)
+                return True
 
         return False
     except Exception as exc:  # noqa: BLE001 - never break the message pipeline
@@ -697,6 +808,13 @@ init_webhook(handle_customer_message)
 # disabled/unavailable, order messages simply fall back to the text pipeline.
 if _COMMERCE_OK and handle_catalog_order is not None:
     init_order_webhook(handle_catalog_order)
+
+# v9.0: route inbound images to visual product search.
+if _COMMERCE_OK:
+    try:
+        init_image_webhook(handle_image_message)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("IMAGE | could not register image handler: %s", exc)
 
 
 # --------------------------------------------------------------------------

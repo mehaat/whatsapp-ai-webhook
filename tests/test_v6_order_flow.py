@@ -21,6 +21,12 @@ def test_catalog_order_webhook_creates_order(monkeypatch):
 
     commerce.bootstrap()
 
+    # Run order side effects synchronously (no worker-thread timing races).
+    import commerce.jobs as cjobs
+    cjobs.register_default_handlers()
+    monkeypatch.setattr(cjobs, "config",
+                        type("C", (), {"jobs_enabled": False, "jobs_workers": 1, "jobs_max_attempts": 3})())
+
     # No outbound network: stub WhatsApp send + read-receipt.
     sent = []
     monkeypatch.setattr(sender, "send_text_message", lambda to, text: sent.append((to, text)) or True)
@@ -84,6 +90,10 @@ def test_duplicate_order_webhook_is_ignored(monkeypatch):
     from commerce.service import order_service
 
     commerce.bootstrap()
+    import commerce.jobs as cjobs
+    cjobs.register_default_handlers()
+    monkeypatch.setattr(cjobs, "config",
+                        type("C", (), {"jobs_enabled": False, "jobs_workers": 1, "jobs_max_attempts": 3})())
     monkeypatch.setattr(sender, "send_text_message", lambda to, text: True)
     monkeypatch.setattr(sender, "mark_message_as_read", lambda mid: True)
     monkeypatch.setattr(wh, "config", type("C", (), {"whatsapp_app_secret": ""})())

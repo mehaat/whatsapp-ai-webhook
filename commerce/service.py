@@ -305,6 +305,9 @@ class OrderService:
                 ))
             self._audit(session, actor, "order.status", "order", str(order.id), status)
             data = _order_to_dict(order)
+        # Apply inventory-reservation side effects AFTER the transaction closes
+        # (separate session avoids nested-lock issues on SQLite).
+        self._apply_reservation_side_effects(order_id, status)
         logger.info("COMMERCE | Order %s -> %s", data["order_number"], status)
         return data
 
@@ -493,6 +496,23 @@ class OrderService:
             logger.debug("COMMERCE | audit failed: %s", exc)
 
     # -- internals --------------------------------------------------------
+
+    @staticmethod
+    def _apply_reservation_side_effects(order_id: int, status: str) -> None:
+        """Release inventory on cancel/refund; commit it on fulfilment.
+
+        Guarded and lazy so the order lifecycle never depends on the reservation
+        module being importable or enabled.
+        """
+        try:
+            from commerce.reservations import commit_for_order, release_for_order
+
+            if status in {"cancelled", "refunded"}:
+                release_for_order(order_id)
+            elif status in {"shipped", "delivered"}:
+                commit_for_order(order_id)
+        except Exception as exc:  # noqa: BLE001 - reservations are best-effort
+            logger.debug("COMMERCE | reservation side effect skipped: %s", exc)
 
     @staticmethod
     def _audit(session, actor, action, entity=None, entity_id=None, detail=None, ip=None) -> None:

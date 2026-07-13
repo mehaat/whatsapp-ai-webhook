@@ -135,3 +135,14 @@ services:
         sync: false
       - key: API_KEY
         sync: false
+      # --- v6.1 (CRM / RBAC / jobs / inventory reservation) ---
+      - key: JOBS_ENABLED
+        value: "true"
+      - key: JOBS_WORKERS
+        value: "2"
+      - key: INVENTORY_RESERVATION_ENABLED
+        value: "true"
+      - key: INVENTORY_SYNC_ENABLED
+        value: "false"
+      - key: DEFAULT_ADMIN_ROLE
+        value: "staff"

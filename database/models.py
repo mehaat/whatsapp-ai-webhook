@@ -351,3 +351,106 @@ class Counter(Base):
 
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# ==========================================================================
+# v6.1 models — RBAC, background jobs, inventory reservation, CRM
+# ==========================================================================
+
+# Role hierarchy (higher index = more privilege). Used for role_required checks.
+ADMIN_ROLES = ("viewer", "staff", "manager", "admin", "owner")
+
+
+class AdminUser(Base):
+    """A dashboard user with a role (multi-user RBAC, v6.1).
+
+    The environment ADMIN_USERNAME/ADMIN_PASSWORD continues to work as a
+    built-in ``owner`` superuser; these rows are additional named users.
+    """
+
+    __tablename__ = "admin_users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String(16), default="staff", index=True)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    email: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+
+
+class Job(Base):
+    """A durable background job (v6.1 queue).
+
+    Persisted for auditability and crash-recovery; a worker pool executes them
+    asynchronously so the webhook request returns quickly.
+    """
+
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(64), index=True)
+    payload: Mapped[Optional[str]] = mapped_column(Text, default=None)  # JSON
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    result: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    error: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class InventoryReservation(Base):
+    """A held quantity against an order line (v6.1 reservation ledger)."""
+
+    __tablename__ = "inventory_reservations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), index=True
+    )
+    product_retailer_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, default=None)
+    variant_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, default=None)
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="reserved", index=True)
+    synced_to_shopify: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class CustomerNote(Base):
+    """A free-text CRM note attached to a customer (v6.1)."""
+
+    __tablename__ = "customer_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    wa_number: Mapped[str] = mapped_column(String(32), index=True)
+    author: Mapped[str] = mapped_column(String(128), default="admin")
+    note: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+
+
+class CrmProfile(Base):
+    """CRM enrichment for a customer: tags, segment, cached lifetime value."""
+
+    __tablename__ = "crm_profiles"
+
+    wa_number: Mapped[str] = mapped_column(String(32), primary_key=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    tags: Mapped[Optional[str]] = mapped_column(Text, default="")  # comma-separated
+    segment: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    lifetime_value: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    orders_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )

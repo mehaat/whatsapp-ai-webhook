@@ -62,29 +62,29 @@ def handle_catalog_order(message: Dict[str, Any], profile_name: str = "") -> Opt
         logger.error("COMMERCE | Failed to persist order for %s: %s", parsed.wa_number, exc)
         return None
 
-    # 3) Auto-create a Shopify draft order (best-effort).
-    if config.auto_draft_order:
-        try:
-            from commerce.draft_orders import create_draft_for_order
-
-            create_draft_for_order(order)
-            # Refresh so downstream steps see any checkout/invoice URL.
-            refreshed = order_service.get_order(order_id=order["id"], include_items=True)
-            if refreshed:
-                order = refreshed
-        except Exception as exc:  # noqa: BLE001
-            logger.error("COMMERCE | Draft order step failed for %s: %s",
-                         order.get("order_number"), exc)
-
-    # 4) Notify the customer that the order was received.
+    # 3) Offload side effects to the background queue so the webhook returns
+    #    fast. When JOBS_ENABLED is false, run_async executes each handler
+    #    synchronously, giving identical behaviour without workers.
     try:
-        from commerce.notifications import notify_order_received
+        from commerce.jobs import run_async
 
-        notify_order_received(order)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("COMMERCE | order-received notification failed: %s", exc)
+        if config.inventory_reservation_enabled:
+            run_async("reserve", {"order_id": order["id"]})
+        if config.auto_draft_order:
+            run_async("draft_order", {"order_id": order["id"]})
+        run_async("notify", {"order_id": order["id"], "status": "received"})
+    except Exception as exc:  # noqa: BLE001 - side effects must never fail ingestion
+        logger.error("COMMERCE | Failed to enqueue order side effects for %s: %s",
+                     order.get("order_number"), exc)
+        # Last-resort synchronous fallback for the customer acknowledgement.
+        try:
+            from commerce.notifications import notify_order_received
 
-    # 5) Alert the admin (if configured).
+            notify_order_received(order)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 4) Alert the admin (if configured) — quick, best-effort.
     _notify_admin_new_order(order)
 
     logger.info("COMMERCE | Catalog order %s ingested for %s",

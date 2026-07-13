@@ -1,6 +1,18 @@
-# ME-HAAT Fashion AI Bot v6.0 Enterprise Commerce Edition
+# ME-HAAT Fashion AI Bot v6.1 Enterprise Commerce Edition
 
-Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — full **Shopify OAuth**, live product cards, catalog ordering, automatic Shopify draft orders, payment links, PDF invoices, live order tracking, a login-protected admin dashboard with an Orders module + analytics, and enterprise foundations.
+Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — full **Shopify OAuth**, live product cards, catalog ordering, automatic Shopify draft orders, payment links, PDF invoices, live order tracking, a login-protected admin dashboard with an Orders module + analytics, a Customer CRM, multi-user roles, background jobs, inventory reservation, and a documented REST API.
+
+## What's New in v6.1
+
+Additive over v6.0 — all existing features preserved and backward compatible; every v6.1 capability degrades gracefully when disabled.
+
+- **Customer CRM** — a `/admin/commerce/crm` console: customer list with lifetime value, order count and last-order date; per-customer profile with full order history, free-text notes, tags, and auto-suggested segments (new / repeat / vip).
+- **Multi-user Admin Roles (RBAC)** — a `admin_users` table and `/admin/users` management console with five roles (viewer, staff, manager, admin, owner). Named users log in with their own password and role; the env `ADMIN_USERNAME`/`ADMIN_PASSWORD` remains a built-in **owner** superuser. A `role_required(...)` decorator gates privileged routes (e.g. user management requires admin/owner).
+- **Background Jobs & Queue** — a durable `jobs` table plus an in-process worker pool. Order side effects (Shopify draft order, invoice, notifications, inventory reservation) run asynchronously so the webhook acks fast; jobs retry with backoff and recover after a restart. Set `JOBS_ENABLED=false` to run everything inline.
+- **Inventory Reservation** — a reservation ledger that reserves stock when an order is placed, releases it on cancel/refund, and commits it on fulfilment. Optionally mirrors reservations to Shopify inventory (`INVENTORY_SYNC_ENABLED`, needs `write_inventory`).
+- **REST API Documentation** — an OpenAPI 3.0 spec at `/api/openapi.json` and interactive **Swagger UI at `/api/docs`**, plus a written `docs/API_REFERENCE.md`, covering the order/tracking/payment API.
+
+## What's New in v6.0 (Enterprise Commerce Edition)
 
 ## What's New in v6.0 (Enterprise Commerce Edition)
 

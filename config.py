@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_VERSION = "6.0"
+APP_VERSION = "6.1"
 
 
 def _split_scopes(raw: str) -> List[str]:
@@ -154,6 +154,31 @@ class Config:
     # WhatsApp number (E.164 digits, no +) that receives admin order alerts.
     admin_whatsapp_number: str = field(
         default_factory=lambda: os.environ.get("ADMIN_WHATSAPP_NUMBER", "")
+    )
+
+    # --- v6.1: background jobs, inventory reservation, RBAC ---
+    # Run order side effects (draft order, invoice, notifications) on a
+    # background worker pool so the webhook returns fast. Falls back to
+    # synchronous execution when disabled.
+    jobs_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("JOBS_ENABLED", "true"), True)
+    )
+    jobs_workers: int = field(default_factory=lambda: int(os.environ.get("JOBS_WORKERS", "2")))
+    jobs_max_attempts: int = field(
+        default_factory=lambda: int(os.environ.get("JOBS_MAX_ATTEMPTS", "3"))
+    )
+    # Maintain a local reservation ledger for ordered quantities. When
+    # INVENTORY_SYNC_ENABLED is also true (and the shop grants write_inventory),
+    # reservations are mirrored to Shopify inventory levels.
+    inventory_reservation_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("INVENTORY_RESERVATION_ENABLED", "true"), True)
+    )
+    inventory_sync_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("INVENTORY_SYNC_ENABLED", "false"), False)
+    )
+    # Default role assigned to newly created dashboard users.
+    default_admin_role: str = field(
+        default_factory=lambda: os.environ.get("DEFAULT_ADMIN_ROLE", "staff").strip().lower()
     )
 
     # --- Business / invoice identity (used on PDF invoices) ---

@@ -1,0 +1,84 @@
+{% extends "admin/base.html" %}
+{% block title %}Customer CRM{% endblock %}
+{% block heading %}Customer CRM{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<form class="toolbar" method="GET" action="{{ url_for('admin_crm.crm_list') }}">
+  <input class="field grow" type="search" name="q" value="{{ filters.query }}"
+         placeholder="Search name or phone…" />
+  <select class="field" name="segment" style="width:auto">
+    <option value="">All segments</option>
+    {% for s in ['vip','repeat','new'] %}
+    <option value="{{ s }}" {{ 'selected' if filters.segment==s }}>{{ s|title }}</option>
+    {% endfor %}
+  </select>
+  <input class="field" type="search" name="tag" value="{{ filters.tag }}"
+         placeholder="Tag…" style="width:auto" />
+  <button class="btn primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
+  <a class="btn ghost" href="{{ url_for('admin_crm.crm_list') }}"><i class="bi bi-x-circle"></i> Reset</a>
+</form>
+
+<div class="card-surface panel">
+  <h3>Customers <span class="subtle">· {{ total }} total</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Customer</th><th>Phone</th>
+        <th class="tabular">Orders</th><th class="tabular">Lifetime Value</th>
+        <th>Last Order</th><th>Segment</th><th>Tags</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in customers %}
+      <tr>
+        <td>
+          <a href="{{ url_for('admin_crm.crm_detail', wa_number=c.wa_number) }}">{{ c.name or 'Unknown' }}</a>
+        </td>
+        <td class="mono">{{ c.wa_number }}</td>
+        <td class="tabular">{{ c.orders_count }}</td>
+        <td class="tabular">₹ {{ '%.2f'|format(c.lifetime_value) }}</td>
+        <td class="subtle">{{ (c.last_order_at or '')[:16].replace('T',' ') or '—' }}</td>
+        <td>
+          <span class="pill {{ 'good' if c.segment=='vip' else 'info' if c.segment=='repeat' else 'warn' }}">{{ (c.segment or 'new')|title }}</span>
+        </td>
+        <td>
+          {% for t in c.tags %}<span class="pill info" style="margin:0 2px 2px 0">{{ t }}</span>{% else %}<span class="subtle">—</span>{% endfor %}
+        </td>
+        <td><a class="pill info" href="{{ url_for('admin_crm.crm_detail', wa_number=c.wa_number) }}">View</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8"><div class="empty"><i class="bi bi-people"></i>No customers match these filters.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% if total_pages > 1 %}
+  <div class="toolbar" style="margin-top:16px;justify-content:space-between">
+    <span class="subtle">Showing {{ showing_from }}–{{ showing_to }} of {{ total }}</span>
+    <span>
+      {% set base_args = dict(request.args) %}
+      {% if page > 1 %}
+      <a class="btn ghost" href="{{ url_for('admin_crm.crm_list', **dict(base_args, page=page-1)) }}"><i class="bi bi-chevron-left"></i> Prev</a>
+      {% endif %}
+      <span class="subtle" style="margin:0 10px">Page {{ page }} / {{ total_pages }}</span>
+      {% if page < total_pages %}
+      <a class="btn ghost" href="{{ url_for('admin_crm.crm_list', **dict(base_args, page=page+1)) }}">Next <i class="bi bi-chevron-right"></i></a>
+      {% endif %}
+    </span>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

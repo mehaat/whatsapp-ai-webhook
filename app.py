@@ -1,8 +1,9 @@
 """
 app.py
 ------
-ME-HAAT Fashion AI Bot v6.0 Enterprise Commerce Edition
+ME-HAAT Fashion AI Bot v6.1 Enterprise Commerce Edition
 Production WhatsApp AI Sales Assistant + Commerce Platform — Shopify OAuth Edition.
+v6.1 adds CRM, multi-user RBAC, background jobs, inventory reservation, REST API docs.
 
 Entry point for the Flask application. Wires together:
     - shopify.auth   : OAuth install/callback routes
@@ -120,14 +121,38 @@ try:
     from commerce.webhook_orders import handle_catalog_order as _handle_catalog_order
 
     app.register_blueprint(commerce_api_bp)
-    try:
-        from admin.orders_routes import admin_orders_bp
 
-        app.register_blueprint(admin_orders_bp)
-    except Exception as exc:  # noqa: BLE001 - admin orders UI is optional
-        logger.error("COMMERCE | Admin orders dashboard unavailable: %s", exc)
+    # v6.1 admin surfaces (RBAC users, CRM) + REST API docs — each guarded so a
+    # single module failure never blocks the others or the core app.
+    for _label, _importer in (
+        ("Admin orders dashboard",
+         lambda: __import__("admin.orders_routes", fromlist=["admin_orders_bp"]).admin_orders_bp),
+        ("Admin users / RBAC",
+         lambda: __import__("admin.users_routes", fromlist=["admin_users_bp"]).admin_users_bp),
+        ("Customer CRM",
+         lambda: __import__("admin.crm_routes", fromlist=["admin_crm_bp"]).admin_crm_bp),
+        ("REST API docs",
+         lambda: __import__("commerce.api_docs", fromlist=["api_docs_bp"]).api_docs_bp),
+    ):
+        try:
+            app.register_blueprint(_importer())
+        except Exception as exc:  # noqa: BLE001 - each surface is optional
+            logger.error("COMMERCE | %s unavailable: %s", _label, exc)
 
-    commerce.bootstrap()  # ensure orders/payments/tracking/invoice tables exist
+    commerce.bootstrap()  # ensure all commerce/v6.1 tables exist
+
+    # v6.1 background job workers — offload order side effects so the webhook
+    # returns fast. Idempotent; recovers any pending jobs on start.
+    if config.jobs_enabled:
+        try:
+            from commerce.jobs import register_default_handlers, start_workers
+
+            register_default_handlers()
+            start_workers()
+            logger.info("COMMERCE | Background job workers started (%d)", config.jobs_workers)
+        except Exception as exc:  # noqa: BLE001 - jobs are optional
+            logger.error("COMMERCE | Job workers unavailable (running synchronously): %s", exc)
+
     handle_catalog_order = _handle_catalog_order
     _COMMERCE_OK = True
 except Exception as exc:  # noqa: BLE001 - commerce must never break startup
@@ -135,12 +160,23 @@ except Exception as exc:  # noqa: BLE001 - commerce must never break startup
 
 @app.context_processor
 def _inject_commerce_flags() -> dict:
-    """Expose whether the v6 admin Orders UI is available to templates.
+    """Expose which v6/v6.1 admin surfaces exist + the current user's role.
 
     Uses the live view registry so a nav link is only shown when its endpoint
     actually exists — a missing blueprint can never break template rendering.
+    The role gates the user-management link to admins/owners.
     """
-    return {"commerce_ui": "admin_orders.orders_list" in app.view_functions}
+    from flask import session as _session
+
+    role = _session.get("admin_role") or ("owner" if _session.get("admin_user") else "")
+    role_rank = {"viewer": 0, "staff": 1, "manager": 2, "admin": 3, "owner": 4}
+    return {
+        "commerce_ui": "admin_orders.orders_list" in app.view_functions,
+        "crm_ui": "admin_crm.crm_list" in app.view_functions,
+        "users_ui": ("admin_users.users_list" in app.view_functions)
+        and (role_rank.get(role, 0) >= role_rank["admin"]),
+        "admin_role": role,
+    }
 
 
 # Secondary rate limiter for AI-generation calls specifically (protects Gemini

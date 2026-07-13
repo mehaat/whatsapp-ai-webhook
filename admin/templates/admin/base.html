@@ -26,11 +26,19 @@
       <a class="nav-link {{ 'active' if nav_active in ['admin_orders.orders_list','admin_orders.order_detail'] }}" href="{{ url_for('admin_orders.orders_list') }}"><i class="bi bi-cart-check"></i> Orders</a>
       <a class="nav-link {{ 'active' if nav_active == 'admin_orders.orders_analytics' }}" href="{{ url_for('admin_orders.orders_analytics') }}"><i class="bi bi-graph-up-arrow"></i> Order Analytics</a>
       {% endif %}
+      {% if crm_ui %}
+      <a class="nav-link {{ 'active' if nav_active in ['admin_crm.crm_list','admin_crm.crm_detail'] }}" href="{{ url_for('admin_crm.crm_list') }}"><i class="bi bi-person-vcard"></i> Customer CRM</a>
+      {% endif %}
       <a class="nav-link {{ 'active' if nav_active == 'admin.orders' }}" href="{{ url_for('admin.orders') }}"><i class="bi bi-box-seam"></i> Order Lookup</a>
       <a class="nav-link {{ 'active' if nav_active in ['admin.customers','admin.customer_detail'] }}" href="{{ url_for('admin.customers') }}"><i class="bi bi-people"></i> Customers</a>
       <div class="nav-section">Insights</div>
       <a class="nav-link {{ 'active' if nav_active == 'admin.analytics_page' }}" href="{{ url_for('admin.analytics_page') }}"><i class="bi bi-bar-chart"></i> Analytics</a>
       <a class="nav-link {{ 'active' if nav_active == 'admin.search_page' }}" href="{{ url_for('admin.search_page') }}"><i class="bi bi-search"></i> Global Search</a>
+      <div class="nav-section">System</div>
+      {% if users_ui %}
+      <a class="nav-link {{ 'active' if nav_active in ['admin_users.users_list','admin_users.user_new','admin_users.user_edit'] }}" href="{{ url_for('admin_users.users_list') }}"><i class="bi bi-shield-lock"></i> Admin Users</a>
+      {% endif %}
+      <a class="nav-link" href="/api/docs" target="_blank"><i class="bi bi-braces"></i> API Docs</a>
     </nav>
     <div style="padding:14px 18px;border-top:1px solid rgba(255,255,255,0.08)">
       <a class="nav-link" href="{{ url_for('admin.logout') }}"><i class="bi bi-box-arrow-right"></i> Logout</a>

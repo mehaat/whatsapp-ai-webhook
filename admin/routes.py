@@ -22,6 +22,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    session,
     url_for,
 )
 
@@ -106,10 +107,25 @@ def login() -> Any:
 
     username = clean_query(request.form.get("username", ""), 80)
     password = request.form.get("password", "")
-    if verify_username(username) and verify_password(password):
+
+    # The environment ADMIN_USERNAME/ADMIN_PASSWORD is a built-in "owner"
+    # superuser. Additional named users (v6.1 RBAC) are checked against the
+    # admin_users table and carry their own role.
+    env_ok = verify_username(username) and verify_password(password)
+    db_user = None
+    if not env_ok:
+        try:
+            from admin.rbac import verify_login
+
+            db_user = verify_login(username, password)
+        except Exception as exc:  # noqa: BLE001 - RBAC must never break core login
+            logger.error("ADMIN | RBAC login check failed: %s", exc)
+
+    if env_ok or db_user:
         start_session(username)
+        session["admin_role"] = "owner" if env_ok else db_user["role"]
         tracker.record_login(username)
-        logger.info("ADMIN | Login success for %s", username)
+        logger.info("ADMIN | Login success for %s (role=%s)", username, session["admin_role"])
         nxt = request.args.get("next", "")
         if nxt.startswith("/admin"):
             return redirect(nxt)

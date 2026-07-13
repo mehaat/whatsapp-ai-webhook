@@ -191,3 +191,16 @@ services:
         value: "histogram"
       - key: SENTRY_ENVIRONMENT
         value: "production"
+      # --- v10.0 ---
+      - key: AGENTS_ENABLED
+        value: "true"
+      - key: AGENTS_WHATSAPP
+        value: "false"
+      - key: RAG_ENABLED
+        value: "true"
+      - key: MCP_ENABLED
+        value: "true"
+      - key: VOICE_ENABLED
+        value: "true"
+      - key: APPROVAL_REQUIRED
+        value: "true"

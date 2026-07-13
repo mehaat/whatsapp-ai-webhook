@@ -1,0 +1,137 @@
+{% extends "admin/base.html" %}
+{% block title %}Knowledge Base{% endblock %}
+{% block heading %}Knowledge Base{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar" style="gap:24px;margin-bottom:16px">
+  <span class="subtle"><i class="bi bi-files"></i> {{ stats.docs }} document(s)</span>
+  <span class="subtle"><i class="bi bi-collection"></i> {{ stats.chunks }} chunk(s)</span>
+</div>
+
+<div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+
+  <!-- Add document -->
+  <div class="card-surface panel">
+    <h3><i class="bi bi-plus-circle"></i> Add a document</h3>
+    <p class="subtle">Paste text or upload a <code>.txt</code> / <code>.md</code> file. It is chunked and indexed for retrieval.</p>
+    <form method="POST" action="{{ url_for('admin_knowledge.knowledge_add') }}" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <div style="margin-bottom:10px">
+        <label class="subtle">Title</label>
+        <input class="field" type="text" name="title" maxlength="512" placeholder="e.g. Return &amp; Refund Policy" style="width:100%" />
+      </div>
+      <div style="margin-bottom:10px">
+        <label class="subtle">Text</label>
+        <textarea class="field" name="text" rows="8" placeholder="Paste the policy / FAQ / product info here…" style="width:100%"></textarea>
+      </div>
+      <div style="margin-bottom:10px">
+        <label class="subtle">…or upload a file (.txt, .md)</label>
+        <input class="field" type="file" name="file" accept=".txt,.md" style="width:100%" />
+      </div>
+      <button class="btn primary" type="submit"><i class="bi bi-cloud-arrow-up"></i> Ingest</button>
+    </form>
+  </div>
+
+  <!-- Test search -->
+  <div class="card-surface panel">
+    <h3><i class="bi bi-search"></i> Test search</h3>
+    <p class="subtle">Retrieve the top matching chunks (offline TF-IDF).</p>
+    <div class="toolbar" style="gap:8px">
+      <input class="field" type="text" id="kb-q" placeholder="Ask a question…" style="flex:1" />
+      <button class="btn primary" type="button" id="kb-go"><i class="bi bi-arrow-right-circle"></i> Search</button>
+    </div>
+    <div id="kb-results" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<!-- Document list -->
+<div class="card-surface panel" style="margin-top:16px">
+  <h3>Documents <span class="subtle">· {{ stats.docs }} total</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr><th>#</th><th>Title</th><th>Source</th><th class="tabular">Chunks</th><th>Created</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for d in docs %}
+      <tr>
+        <td class="mono">{{ d.id }}</td>
+        <td>{{ d.title }}</td>
+        <td class="subtle">{{ d.source or '—' }}</td>
+        <td class="tabular">{{ d.chunk_count }}</td>
+        <td class="subtle">{{ (d.created_at or '')[:16].replace('T',' ') }}</td>
+        <td>
+          <form method="POST" action="{{ url_for('admin_knowledge.knowledge_delete', doc_id=d.id) }}"
+                onsubmit="return confirm('Delete this document?');" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button class="btn ghost" type="submit"><i class="bi bi-trash"></i> Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6"><div class="empty"><i class="bi bi-inbox"></i>No documents yet. Add one above.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const input = document.getElementById('kb-q');
+  const btn = document.getElementById('kb-go');
+  const box = document.getElementById('kb-results');
+  const searchUrl = "{{ url_for('admin_knowledge.knowledge_search') }}";
+
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, c => (
+      {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+    ));
+  }
+
+  async function run() {
+    const q = (input.value || '').trim();
+    if (!q) { box.innerHTML = ''; return; }
+    box.innerHTML = '<div class="subtle">Searching…</div>';
+    try {
+      const res = await fetch(searchUrl + '?q=' + encodeURIComponent(q), {
+        headers: { 'Accept': 'application/json' }
+      });
+      const data = await res.json();
+      const results = (data && data.results) || [];
+      if (!results.length) {
+        box.innerHTML = '<div class="empty"><i class="bi bi-search"></i>No matches.</div>';
+        return;
+      }
+      box.innerHTML = results.map(r => (
+        '<div class="card-surface" style="padding:10px 12px;margin-bottom:8px">' +
+          '<div class="toolbar" style="justify-content:space-between">' +
+            '<strong>' + escapeHtml(r.doc_title || 'Untitled') + '</strong>' +
+            '<span class="pill info">' + Number(r.score).toFixed(3) + '</span>' +
+          '</div>' +
+          '<div class="subtle" style="margin-top:6px">' + escapeHtml((r.text || '').slice(0, 320)) + '</div>' +
+        '</div>'
+      )).join('');
+    } catch (err) {
+      box.innerHTML = '<div class="pill bad" style="display:block;padding:8px 12px">Search failed.</div>';
+    }
+  }
+
+  btn.addEventListener('click', run);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); run(); } });
+})();
+</script>
+{% endblock %}

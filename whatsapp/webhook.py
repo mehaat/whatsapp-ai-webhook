@@ -42,6 +42,8 @@ _message_handler: Optional[MessageHandler] = None
 _order_handler: Optional[OrderHandler] = None
 # Type: (message: dict, profile_name: str) -> None  (inbound image → visual search)
 _image_handler: Optional[OrderHandler] = None
+# Type: (message: dict, profile_name: str) -> None  (inbound audio → voice agent)
+_audio_handler: Optional[OrderHandler] = None
 _rate_limiter = RateLimiter(max_requests=20, window_seconds=60)
 
 # --------------------------------------------------------------------------
@@ -90,6 +92,17 @@ def init_image_webhook(handler: OrderHandler) -> None:
     """
     global _image_handler
     _image_handler = handler
+
+
+def init_audio_webhook(handler: OrderHandler) -> None:
+    """Register the callback invoked for each inbound WhatsApp audio note (v10.0).
+
+    Args:
+        handler: Callable taking (message: dict, profile_name: str). Optional;
+            when unset, audio messages fall back to the unsupported-type reply.
+    """
+    global _audio_handler
+    _audio_handler = handler
 
 
 def _already_processed(message_id: str) -> bool:
@@ -256,6 +269,15 @@ def _process_messages(value: Dict[str, Any]) -> None:
                 _image_handler(message, profile_name)
             except Exception as exc:  # noqa: BLE001 - never crash the webhook
                 logger.error("IMAGE | Image handler failed for %s: %s", wa_number, exc)
+            continue
+
+        # v10.0: inbound audio/voice note → voice agent.
+        if message_type == "audio" and _audio_handler is not None:
+            logger.info("AUDIO | Incoming voice note from %s", wa_number)
+            try:
+                _audio_handler(message, profile_name)
+            except Exception as exc:  # noqa: BLE001 - never crash the webhook
+                logger.error("AUDIO | Audio handler failed for %s: %s", wa_number, exc)
             continue
 
         if not _rate_limiter.is_allowed(wa_number):

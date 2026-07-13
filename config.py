@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_VERSION = "9.0"
+APP_VERSION = "10.0"
 
 
 def _split_scopes(raw: str) -> List[str]:
@@ -293,6 +293,41 @@ class Config:
     )
     gemini_vision_model: str = field(
         default_factory=lambda: os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+    )
+
+    # --- v10.0 AI agents / orchestration ---
+    # Master switch for the multi-agent orchestrator (API + admin console).
+    agents_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("AGENTS_ENABLED", "true"), True)
+    )
+    # Route inbound WhatsApp text through the orchestrator. OFF by default so the
+    # existing message pipeline is unchanged; turn on to let agents drive chat.
+    agents_whatsapp: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("AGENTS_WHATSAPP", "false"), False)
+    )
+    # RAG knowledge base (document-grounded answers).
+    rag_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("RAG_ENABLED", "true"), True)
+    )
+    rag_top_k: int = field(default_factory=lambda: int(os.environ.get("RAG_TOP_K", "4")))
+    # MCP tool server (expose internal tools via Model Context Protocol).
+    mcp_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("MCP_ENABLED", "true"), True)
+    )
+    # Voice agent (inbound WhatsApp audio -> transcribe -> orchestrate).
+    voice_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("VOICE_ENABLED", "true"), True)
+    )
+    # Human approval workflow: sensitive actions above these thresholds require
+    # explicit admin approval before execution.
+    approval_required: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("APPROVAL_REQUIRED", "true"), True)
+    )
+    approval_refund_over: float = field(
+        default_factory=lambda: float(os.environ.get("APPROVAL_REFUND_OVER", "0") or 0)
+    )
+    approval_broadcast_over: int = field(
+        default_factory=lambda: int(os.environ.get("APPROVAL_BROADCAST_OVER", "50"))
     )
 
     # --- Business / invoice identity (used on PDF invoices) ---

@@ -813,3 +813,78 @@ class ApiUsage(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+
+
+# ==========================================================================
+# v10.0 — AI agents, RAG knowledge base, human-approval workflow
+# ==========================================================================
+
+
+class KnowledgeDoc(Base):
+    """A source document ingested into the RAG knowledge base."""
+
+    __tablename__ = "knowledge_docs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(Integer, index=True, default=None)
+    title: Mapped[str] = mapped_column(String(512))
+    source: Mapped[Optional[str]] = mapped_column(String(512), default=None)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True, default=None)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class KnowledgeChunk(Base):
+    """A retrievable chunk of a knowledge document (with a cached term map)."""
+
+    __tablename__ = "knowledge_chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_docs.id", ondelete="CASCADE"), index=True
+    )
+    tenant_id: Mapped[Optional[int]] = mapped_column(Integer, index=True, default=None)
+    chunk_index: Mapped[int] = mapped_column(Integer, default=0)
+    text: Mapped[str] = mapped_column(Text)
+    terms: Mapped[Optional[str]] = mapped_column(Text, default=None)  # JSON term->count
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ApprovalRequest(Base):
+    """A human-approval request for a sensitive agent/admin action."""
+
+    __tablename__ = "approval_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(Integer, index=True, default=None)
+    action: Mapped[str] = mapped_column(String(64), index=True)  # tool/action name
+    payload: Mapped[Optional[str]] = mapped_column(Text, default="{}")  # JSON args
+    reason: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    risk: Mapped[str] = mapped_column(String(16), default="high")
+    requested_by: Mapped[str] = mapped_column(String(128), default="agent")
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    result: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    decided_by: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+
+
+class AgentRun(Base):
+    """An audit record of an orchestrator/agent turn (for the agents console)."""
+
+    __tablename__ = "agent_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(Integer, index=True, default=None)
+    agent: Mapped[str] = mapped_column(String(48), index=True)
+    channel: Mapped[str] = mapped_column(String(16), default="api")  # api|whatsapp|console
+    wa_number: Mapped[Optional[str]] = mapped_column(String(32), index=True, default=None)
+    intent: Mapped[Optional[str]] = mapped_column(String(48), default=None)
+    user_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    reply: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    tools_used: Mapped[Optional[str]] = mapped_column(Text, default="[]")  # JSON
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )

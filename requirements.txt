@@ -1,4 +1,7 @@
-# ME-HAAT Fashion AI Bot v9.0 Enterprise Edition — runtime dependencies
+# ME-HAAT Fashion AI Bot v10.0 Enterprise Edition — runtime dependencies
+# v10.0 (AI agents, RAG, MCP, approvals) adds no new hard dependencies — the
+# tool registry, TF-IDF retriever (numpy), MCP JSON-RPC server, and approval
+# workflow are built on the existing stack.
 # Core — unchanged
 Flask==3.0.3
 gunicorn==22.0.0

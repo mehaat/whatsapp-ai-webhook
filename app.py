@@ -1,10 +1,11 @@
 """
 app.py
 ------
-ME-HAAT Fashion AI Bot v9.0 Enterprise Edition
+ME-HAAT Fashion AI Bot v10.0 Enterprise Edition
 Production WhatsApp AI Sales Assistant + Commerce Platform — Shopify OAuth Edition.
-v9.0 adds a developer portal 2.0, deep Sentry + Redis cache/HA, Kubernetes/Helm,
-and Advanced AI Commerce (visual search, AI stylist, personal shopper, recommender).
+v10.0 adds a multi-agent AI orchestrator (sales/support/inventory/marketing/analytics/
+voice specialists), a RAG knowledge base, an MCP tool server, and a human-approval
+workflow for sensitive actions.
 
 Entry point for the Flask application. Wires together:
     - shopify.auth   : OAuth install/callback routes
@@ -51,6 +52,7 @@ from utils.ratelimit import RateLimiter
 from utils.security import contains_injection_attempt, sanitize_input
 from whatsapp.sender import send_products, send_text_message
 from whatsapp.webhook import (
+    init_audio_webhook,
     init_image_webhook,
     init_order_webhook,
     init_webhook,
@@ -198,6 +200,12 @@ try:
         ("AI commerce console", _bp("admin.ai_commerce_routes", "admin_ai_commerce_bp")),
         ("Recommendations API", _bp("commerce.reco_api", "reco_api_bp")),
         ("AI commerce API", _bp("commerce.ai_commerce_api", "ai_commerce_api_bp")),
+        # v10.0 AI agents.
+        ("Agent API", _bp("agents.agent_api", "agent_api_bp")),
+        ("Agents console", _bp("admin.agents_routes", "admin_agents_bp")),
+        ("Knowledge base", _bp("admin.knowledge_routes", "admin_knowledge_bp")),
+        ("Approvals inbox", _bp("admin.approvals_routes", "admin_approvals_bp")),
+        ("MCP tool server", _bp("mcp.server", "mcp_bp")),
     ):
         try:
             app.register_blueprint(_importer())
@@ -213,6 +221,22 @@ try:
         ensure_default_tenant()
     except Exception as exc:  # noqa: BLE001 - tenancy optional
         logger.error("COMMERCE | default tenant bootstrap failed: %s", exc)
+
+    # v10.0: activate the human-approval gate for high-risk agent tools and
+    # register the RAG knowledge_search tool.
+    try:
+        from agents.approvals import install_gate
+
+        install_gate()
+    except Exception as exc:  # noqa: BLE001 - approval gate optional
+        logger.error("AGENTS | approval gate unavailable: %s", exc)
+    try:
+        if config.rag_enabled:
+            from knowledge.rag import register_tool as _register_kb_tool
+
+            _register_kb_tool()
+    except Exception as exc:  # noqa: BLE001 - knowledge tool optional
+        logger.error("AGENTS | knowledge tool registration failed: %s", exc)
 
     # v6.1 background job workers — offload order side effects so the webhook
     # returns fast. Idempotent; recovers any pending jobs on start.
@@ -379,6 +403,31 @@ def handle_image_message(message: dict, profile_name: str) -> None:
         )
 
 
+def handle_audio_message(message: dict, profile_name: str) -> None:
+    """Handle an inbound WhatsApp voice note via the v10.0 voice agent."""
+    wa_number = message.get("from", "")
+    if not config.voice_enabled:
+        send_text_message(
+            wa_number,
+            "🎤 Thanks for the voice note! Please type your question and I'll help right away.",
+        )
+        return
+    try:
+        audio = message.get("audio", {}) or {}
+        from whatsapp.media import download_media
+        from agents.voice import handle_voice
+
+        audio_bytes = download_media(audio.get("id", "")) or b""
+        reply = handle_voice(wa_number, audio_bytes, mime=audio.get("mime_type", "audio/ogg"))
+        send_text_message(wa_number, reply)
+    except Exception as exc:  # noqa: BLE001 - never crash the webhook
+        logger.error("AUDIO | voice handling failed for %s: %s", wa_number, exc)
+        send_text_message(
+            wa_number,
+            "🎤 I couldn't process that voice note. Please type your question and I'll help.",
+        )
+
+
 def _try_commerce_reply(wa_number: str, text: str) -> bool:
     """Handle v6 commerce conversational intents (order tracking).
 
@@ -512,6 +561,21 @@ def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) ->
     # v6.0 commerce intents (order tracking) — additive, early, fully guarded.
     if _try_commerce_reply(wa_number, raw_text):
         return
+
+    # v10.0: when enabled, route the message through the AI agent orchestrator
+    # instead of the legacy search/FAQ/Gemini pipeline. Off by default.
+    if _COMMERCE_OK and config.agents_whatsapp:
+        try:
+            from agents.orchestrator import orchestrator
+
+            resp = orchestrator.route(
+                raw_text, {"channel": "whatsapp", "wa_number": wa_number}
+            )
+            if resp and resp.text:
+                _finalize_reply(wa_number, resp.text, time.perf_counter())
+                return
+        except Exception as exc:  # noqa: BLE001 - fall back to the legacy pipeline
+            logger.error("AGENTS | orchestrator routing failed: %s", exc)
 
     start_time = time.perf_counter()
 
@@ -815,6 +879,13 @@ if _COMMERCE_OK:
         init_image_webhook(handle_image_message)
     except Exception as exc:  # noqa: BLE001
         logger.error("IMAGE | could not register image handler: %s", exc)
+
+# v10.0: route inbound voice notes to the voice agent.
+if _COMMERCE_OK:
+    try:
+        init_audio_webhook(handle_audio_message)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("AUDIO | could not register audio handler: %s", exc)
 
 
 # --------------------------------------------------------------------------

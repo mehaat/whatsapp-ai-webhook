@@ -1,6 +1,19 @@
-# ME-HAAT Fashion AI Bot v9.0 Enterprise Edition
+# ME-HAAT Fashion AI Bot v10.0 Enterprise Edition
 
-Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — Shopify OAuth, catalog ordering, payments, invoices/labels, tracking, coupons/gift cards, returns, shipping, CRM, support, 2FA/RBAC, Celery/Redis, monitoring, multi-tenant, compliance, **Kubernetes/Helm**, and **Advanced AI Commerce** (visual product search, AI stylist, personal shopper, recommendation engine).
+Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — Shopify OAuth, ordering, payments, invoices, tracking, coupons/returns/shipping, CRM, RBAC/2FA, Celery/Redis, monitoring, multi-tenant, compliance, Kubernetes/Helm, Advanced AI Commerce, and a **multi-agent AI orchestrator** with a RAG knowledge base, an MCP tool server, and a human-approval workflow.
+
+## What's New in v10.0 — AI-First Architecture
+
+Additive over v9.0 — all prior features preserved; every agent surface is guarded and feature-flagged. This release shifts from features to an **agentic architecture**.
+
+- **AI Orchestrator + specialist agents** — one orchestrator classifies each message and routes it to the right specialist: **Sales**, **Customer Support**, **Inventory**, **Marketing**, **Analytics**, and **Voice**. Each agent works over a shared **tool registry** (search, order status, returns, tickets, recommendations, stylist, stock, analytics, coupons, broadcasts, refunds…). Exposed via `POST /api/agent`, an `/admin/agents` console, and — behind `AGENTS_WHATSAPP` — the live WhatsApp chat. Agents phrase replies with Gemini when a key is set and a clean deterministic fallback otherwise (so they run fully offline).
+- **RAG Knowledge Base** — ingest policies/FAQs/product docs (`/admin/knowledge`); an **offline TF-IDF retriever** grounds answers in your documents (Gemini answer-composition when a key is present). Surfaced as a `knowledge_search` agent tool.
+- **MCP (Model Context Protocol) tool server** — a JSON-RPC endpoint at **`POST /mcp`** (`initialize`, `tools/list`, `tools/call`, `ping`) exposes the store's tools to external MCP clients (Claude Desktop, IDEs). High-risk tools remain approval-gated; `docs/MCP.md` has the details.
+- **Voice Agent** — inbound WhatsApp voice notes are downloaded and transcribed (Gemini audio when configured), then routed through the orchestrator; graceful "please type" fallback when transcription is unavailable.
+- **Human Approval Workflow** — sensitive actions (refunds, coupons, large broadcasts) are held as **approval requests** an admin reviews at `/admin/approvals` before execution; small broadcasts auto-approve under a configurable threshold. Wired directly into the tool registry so agents *and* MCP callers are both gated.
+- **Visual Product Search** — carried forward from v9.0 (send a photo → similar products).
+
+## What's New in v9.0
 
 ## What's New in v9.0
 

@@ -1,5 +1,13 @@
 # ME-HAAT Fashion AI Bot — Enterprise Roadmap & Status
 
+> **v10.0 update (AI-first):** delivered a multi-agent **AI Orchestrator** with Sales,
+> Support, Inventory, Marketing, Analytics and Voice specialists over a shared tool
+> registry; a **RAG knowledge base** (offline TF-IDF + Gemini answer path); an **MCP tool
+> server** (JSON-RPC at /mcp); and a **human-approval workflow** for sensitive actions.
+> This addresses §4 (Personal Shopper/agents) and §5 (agentic WhatsApp) at the architecture
+> level. Remaining ⏳: real speech-to-text for the voice agent (plumbing done, needs an STT
+> model/API), and Flow API.
+
 > **v9.0 update:** delivered the developer portal 2.0 (full OpenAPI + usage analytics),
 > deep Sentry + Redis cache/HA (Sentinel/Cluster + shared rate limiting), **Kubernetes+Helm**
 > chart (§19), and **Advanced AI Commerce** — Visual Product Search, AI Stylist, Personal

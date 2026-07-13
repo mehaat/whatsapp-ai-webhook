@@ -26,6 +26,16 @@ reportlab>=4.0.0
 qrcode[pil]>=7.4.2
 # PyJWT secures the programmatic order/tracking API (Bearer tokens).
 PyJWT>=2.8.0
+
+# v7.0 additions.
+# pyotp powers admin TOTP two-factor authentication.
+pyotp>=2.9.0
+# alembic enables reviewed, versioned migrations (the app also auto-migrates
+# additively on boot; alembic is for destructive/mature schema changes).
+alembic>=1.13.0
+# Optional error monitoring — only used when SENTRY_DSN is set. Uncomment to
+# enable Sentry; the app degrades gracefully when it is absent.
+# sentry-sdk>=2.0.0
 # NOTE: payment gateways (Razorpay/Stripe/Cashfree/PhonePe) are integrated via
 # their REST APIs using the existing `requests` dependency — no gateway SDKs
 # are required, keeping the dependency surface small.

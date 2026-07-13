@@ -105,6 +105,24 @@ app.register_blueprint(whatsapp_webhook_bp)
 # Security headers + per-request trace-id context (v4.0, additive).
 register_middleware(app)
 
+# v7.0 observability: optional Sentry error monitoring (no-op unless SENTRY_DSN).
+try:
+    from utils.observability import incr, init_sentry
+
+    init_sentry()
+
+    @app.after_request
+    def _count_request(response):  # noqa: ANN001
+        try:
+            incr("http_requests_total")
+            if response.status_code >= 500:
+                incr("http_5xx_total")
+        except Exception:  # noqa: BLE001
+            pass
+        return response
+except Exception as exc:  # noqa: BLE001 - observability is optional
+    logger.warning("OBSERVABILITY | disabled: %s", exc)
+
 # Login-protected Admin Dashboard at /admin (v4.2, additive). Registers its own
 # blueprint + session config; does not touch any existing route or behaviour.
 init_admin(app)
@@ -124,15 +142,25 @@ try:
 
     # v6.1 admin surfaces (RBAC users, CRM) + REST API docs — each guarded so a
     # single module failure never blocks the others or the core app.
+    def _bp(module, name):
+        return lambda: getattr(__import__(module, fromlist=[name]), name)
+
     for _label, _importer in (
-        ("Admin orders dashboard",
-         lambda: __import__("admin.orders_routes", fromlist=["admin_orders_bp"]).admin_orders_bp),
-        ("Admin users / RBAC",
-         lambda: __import__("admin.users_routes", fromlist=["admin_users_bp"]).admin_users_bp),
-        ("Customer CRM",
-         lambda: __import__("admin.crm_routes", fromlist=["admin_crm_bp"]).admin_crm_bp),
-        ("REST API docs",
-         lambda: __import__("commerce.api_docs", fromlist=["api_docs_bp"]).api_docs_bp),
+        ("Admin orders dashboard", _bp("admin.orders_routes", "admin_orders_bp")),
+        ("Admin users / RBAC", _bp("admin.users_routes", "admin_users_bp")),
+        ("Customer CRM", _bp("admin.crm_routes", "admin_crm_bp")),
+        ("REST API docs", _bp("commerce.api_docs", "api_docs_bp")),
+        # v7.0 surfaces.
+        ("Promotions (coupons/gift cards)", _bp("admin.promos_routes", "admin_promos_bp")),
+        ("Returns / RMA", _bp("admin.returns_routes", "admin_returns_bp")),
+        ("Catalog (bundles/wishlist/carts)", _bp("admin.catalog_routes", "admin_catalog_bp")),
+        ("Shipping", _bp("admin.shipping_routes", "admin_shipping_bp")),
+        ("Support tickets", _bp("admin.tickets_routes", "admin_tickets_bp")),
+        ("Settings UI", _bp("admin.settings_routes", "admin_settings_bp")),
+        ("Ops dashboards", _bp("admin.ops_routes", "admin_ops_bp")),
+        ("Broadcast manager", _bp("admin.broadcast_routes", "admin_broadcast_bp")),
+        ("Security (2FA/login history)", _bp("admin.security_routes", "admin_security_bp")),
+        ("Reports", _bp("admin.reports_routes", "admin_reports_bp")),
     ):
         try:
             app.register_blueprint(_importer())
@@ -148,6 +176,12 @@ try:
             from commerce.jobs import register_default_handlers, start_workers
 
             register_default_handlers()
+            try:
+                from commerce.broadcast import register_broadcast_handler
+
+                register_broadcast_handler()
+            except Exception as exc:  # noqa: BLE001 - broadcast is optional
+                logger.error("COMMERCE | broadcast handler unavailable: %s", exc)
             start_workers()
             logger.info("COMMERCE | Background job workers started (%d)", config.jobs_workers)
         except Exception as exc:  # noqa: BLE001 - jobs are optional
@@ -176,6 +210,8 @@ def _inject_commerce_flags() -> dict:
         "users_ui": ("admin_users.users_list" in app.view_functions)
         and (role_rank.get(role, 0) >= role_rank["admin"]),
         "admin_role": role,
+        "is_admin_role": role_rank.get(role, 0) >= role_rank["admin"],
+        "has_view": lambda name: name in app.view_functions,
     }
 
 
@@ -248,23 +284,64 @@ def _try_commerce_reply(wa_number: str, text: str) -> bool:
     if not _COMMERCE_OK or not config.commerce_enabled:
         return False
     try:
-        from commerce.intent import is_tracking_intent
+        from commerce.intent import detect_intent
         from commerce.service import order_service
 
-        if not is_tracking_intent(text or ""):
-            return False
-        order = order_service.latest_order_for(wa_number)
-        if not order:
+        intent = detect_intent(text or "")
+
+        if intent == "track_order":
+            order = order_service.latest_order_for(wa_number)
+            if not order:
+                send_text_message(
+                    wa_number,
+                    "I couldn't find a recent order linked to this number. If you placed one "
+                    "via our catalog, please share your order number (e.g. MH-2026-000123).",
+                )
+            else:
+                send_text_message(wa_number, _format_tracking_reply(order))
+            return True
+
+        if intent in ("support", "human_agent", "escalation"):
+            from commerce.tickets import create_ticket
+
+            ticket = create_ticket(
+                subject="WhatsApp support request", wa_number=wa_number,
+                body=text, author="customer",
+                priority="high" if intent == "escalation" else "normal",
+            )
+            num = ticket.get("ticket_number", "")
             send_text_message(
                 wa_number,
-                "I couldn't find a recent order linked to this number. If you placed one "
-                "via our catalog, please share your order number (e.g. MH-2026-000123).",
+                f"🙏 We've created a support ticket {num} and our team will reach out "
+                "shortly. You can keep replying here with more details.",
             )
             return True
-        send_text_message(wa_number, _format_tracking_reply(order))
-        return True
+
+        if intent in ("return", "refund"):
+            from commerce.returns import create_return
+
+            order = order_service.latest_order_for(wa_number)
+            if not order:
+                send_text_message(
+                    wa_number,
+                    "I couldn't find a recent order to process a return/refund. Please share "
+                    "your order number (e.g. MH-2026-000123).",
+                )
+                return True
+            rr = create_return(
+                order["id"], kind=("refund" if intent == "refund" else "return"),
+                reason=text, wa_number=wa_number, actor="whatsapp",
+            )
+            send_text_message(
+                wa_number,
+                f"We've logged your {intent} request ({rr.get('rma_number','')}) for order "
+                f"{order['order_number']}. Our team will review and update you soon.",
+            )
+            return True
+
+        return False
     except Exception as exc:  # noqa: BLE001 - never break the message pipeline
-        logger.error("COMMERCE | tracking reply failed: %s", exc)
+        logger.error("COMMERCE | commerce intent reply failed: %s", exc)
         return False
 
 
@@ -624,6 +701,20 @@ def health_ready():
     report = readiness()
     status_code = 200 if report.get("ready") else 503
     return jsonify(report), status_code
+
+
+@app.route("/metrics", methods=["GET"])
+def metrics():
+    """Prometheus-format metrics endpoint (v7.0). Disabled via METRICS_ENABLED=false."""
+    if not config.metrics_enabled:
+        return "metrics disabled\n", 404, {"Content-Type": "text/plain"}
+    try:
+        from utils.observability import render_metrics
+
+        return render_metrics(), 200, {"Content-Type": "text/plain; version=0.0.4"}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("METRICS | render failed: %s", exc)
+        return "metrics error\n", 500, {"Content-Type": "text/plain"}
 
 
 # --------------------------------------------------------------------------

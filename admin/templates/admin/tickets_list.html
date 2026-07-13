@@ -1,0 +1,77 @@
+{% extends "admin/base.html" %}
+{% block title %}Support Tickets{% endblock %}
+{% block heading %}Support Tickets{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<form class="toolbar" method="GET" action="{{ url_for('admin_tickets.tickets_list') }}">
+  <select class="field" name="status" style="width:auto">
+    <option value="">All statuses</option>
+    {% for s in statuses %}
+    <option value="{{ s }}" {{ 'selected' if status==s }}>{{ s|title }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
+  <a class="btn ghost" href="{{ url_for('admin_tickets.tickets_list') }}"><i class="bi bi-x-circle"></i> Reset</a>
+</form>
+
+<div class="card-surface panel">
+  <h3>Tickets <span class="subtle">· {{ total }} total</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Ticket #</th><th>Subject</th><th>Customer</th><th>Priority</th>
+        <th>Status</th><th>Assigned</th><th>Created</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tickets %}
+      <tr>
+        <td class="mono"><a href="{{ url_for('admin_tickets.ticket_detail', tid=t.id) }}">{{ t.ticket_number }}</a></td>
+        <td>{{ (t.subject or '—')[:48] }}</td>
+        <td class="mono">{{ t.wa_number or '—' }}</td>
+        <td>
+          <span class="pill {{ 'bad' if t.priority=='urgent' else 'warn' if t.priority=='high' else 'info' if t.priority=='normal' else 'muted' }}">{{ t.priority|title }}</span>
+        </td>
+        <td>
+          <span class="pill {{ 'good' if t.status=='resolved' else 'muted' if t.status=='closed' else 'warn' if t.status=='pending' else 'info' }}">{{ t.status|title }}</span>
+        </td>
+        <td class="subtle">{{ t.assigned_to or '—' }}</td>
+        <td class="subtle">{{ (t.created_at or '')[:16].replace('T',' ') }}</td>
+        <td><a class="pill info" href="{{ url_for('admin_tickets.ticket_detail', tid=t.id) }}">Open</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8"><div class="empty"><i class="bi bi-life-preserver"></i>No tickets match these filters.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% if total_pages > 1 %}
+  <div class="toolbar" style="margin-top:16px;justify-content:space-between">
+    <span class="subtle">Showing {{ showing_from }}–{{ showing_to }} of {{ total }}</span>
+    <span>
+      {% set base_args = dict(request.args) %}
+      {% if page > 1 %}
+      <a class="btn ghost" href="{{ url_for('admin_tickets.tickets_list', **dict(base_args, page=page-1)) }}"><i class="bi bi-chevron-left"></i> Prev</a>
+      {% endif %}
+      <span class="subtle" style="margin:0 10px">Page {{ page }} / {{ total_pages }}</span>
+      {% if page < total_pages %}
+      <a class="btn ghost" href="{{ url_for('admin_tickets.tickets_list', **dict(base_args, page=page+1)) }}">Next <i class="bi bi-chevron-right"></i></a>
+      {% endif %}
+    </span>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

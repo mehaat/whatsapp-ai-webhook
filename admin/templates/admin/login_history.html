@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+{% block title %}Login History{% endblock %}
+{% block heading %}Login History{% endblock %}
+{% block content %}
+
+<form class="toolbar" method="GET" action="{{ url_for('admin_security.login_history') }}">
+  <input class="field" type="text" name="username" value="{{ username }}" placeholder="Filter by username" style="width:auto" />
+  <button class="btn primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
+  <a class="btn ghost" href="{{ url_for('admin_security.login_history') }}"><i class="bi bi-x-circle"></i> Reset</a>
+  <span class="spacer" style="flex:1"></span>
+  <a class="btn ghost" href="{{ url_for('admin_security.login_history', username=username, export='csv') }}"><i class="bi bi-filetype-csv"></i> CSV</a>
+  <a class="btn ghost" href="{{ url_for('admin_security.login_history', username=username, export='xlsx') }}"><i class="bi bi-file-earmark-spreadsheet"></i> Excel</a>
+  <a class="btn ghost" href="{{ url_for('admin_security.login_history', username=username, export='pdf') }}"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+</form>
+
+<div class="card-surface panel">
+  <h3>Sign-in Attempts <span class="subtle">· {{ events|length }} shown</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr><th>When</th><th>Username</th><th>IP</th><th>User Agent</th><th>Result</th></tr>
+    </thead>
+    <tbody>
+      {% for e in events %}
+      <tr>
+        <td class="subtle">{{ (e.created_at or '')[:19].replace('T',' ') }}</td>
+        <td class="mono">{{ e.username }}</td>
+        <td class="mono">{{ e.ip or '—' }}</td>
+        <td class="subtle" title="{{ e.user_agent }}">{{ (e.user_agent or '—')[:60] }}</td>
+        <td>
+          {% if e.success %}<span class="pill good">Success</span>{% else %}<span class="pill bad">Failed</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5"><div class="empty"><i class="bi bi-shield-check"></i>No login events recorded yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

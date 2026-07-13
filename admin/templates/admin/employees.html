@@ -1,0 +1,35 @@
+{% extends "admin/base.html" %}
+{% block title %}Employees{% endblock %}
+{% block heading %}Employee Dashboard{% endblock %}
+{% block content %}
+
+<div class="card-surface panel">
+  <h3>Dashboard Users <span class="subtle">· {{ employees|length }} total</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Username</th><th>Name</th><th>Role</th><th>Active</th>
+        <th class="tabular">Actions</th><th>Last Login</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in employees %}
+      <tr>
+        <td class="mono">{{ e.username }}</td>
+        <td>{{ e.full_name or '—' }}</td>
+        <td><span class="pill info">{{ e.role|title }}</span></td>
+        <td>
+          {% if e.active %}<span class="pill good">Active</span>{% else %}<span class="pill muted">Inactive</span>{% endif %}
+        </td>
+        <td class="tabular">{{ e.action_count }}</td>
+        <td class="subtle">{{ (e.last_login_event or '—')[:16].replace('T',' ') if e.last_login_event else '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6"><div class="empty"><i class="bi bi-people"></i>No dashboard users yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,81 @@
+{% extends "admin/base.html" %}
+{% block title %}Return {{ rma.rma_number }}{% endblock %}
+{% block heading %}Return {{ rma.rma_number }}{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<a class="btn ghost" href="{{ url_for('admin_returns.returns_list') }}"><i class="bi bi-chevron-left"></i> Back to returns</a>
+
+<div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px">
+
+  <div class="card-surface panel">
+    <h3>Request</h3>
+    <table class="tbl">
+      <tr><th>RMA #</th><td class="mono">{{ rma.rma_number }}</td></tr>
+      <tr><th>Kind</th><td>{{ rma.kind|title }}</td></tr>
+      <tr><th>Status</th><td>
+        <span class="pill {{ 'good' if rma.status=='completed' else 'bad' if rma.status=='rejected' else 'info' if rma.status=='approved' else 'warn' }}">{{ rma.status|title }}</span>
+      </td></tr>
+      <tr><th>Customer</th><td class="mono">{{ rma.wa_number or '—' }}</td></tr>
+      <tr><th>Refund</th><td class="tabular">{{ '%.2f'|format(rma.refund_amount) }}</td></tr>
+      <tr><th>Reason</th><td>{{ rma.reason or '—' }}</td></tr>
+      <tr><th>Resolution</th><td>{{ rma.resolution or '—' }}</td></tr>
+      <tr><th>Created</th><td class="subtle">{{ (rma.created_at or '')[:19].replace('T',' ') }}</td></tr>
+      <tr><th>Updated</th><td class="subtle">{{ (rma.updated_at or '')[:19].replace('T',' ') }}</td></tr>
+    </table>
+  </div>
+
+  <div class="card-surface panel">
+    <h3>Linked Order</h3>
+    {% if order %}
+    <table class="tbl">
+      <tr><th>Order #</th><td class="mono">
+        <a href="{{ url_for('admin_orders.order_detail', order_id=order.id) }}">{{ order.order_number }}</a>
+      </td></tr>
+      <tr><th>Status</th><td>{{ order.status|replace('_',' ')|title }}</td></tr>
+      <tr><th>Payment</th><td>{{ order.payment_status|title }}</td></tr>
+      <tr><th>Total</th><td class="tabular">{{ order.currency }} {{ '%.2f'|format(order.total_amount) }}</td></tr>
+    </table>
+    {% else %}
+    <div class="empty"><i class="bi bi-box-seam"></i>Order #{{ rma.order_id }} not available.</div>
+    {% endif %}
+  </div>
+
+</div>
+
+<div class="card-surface panel" style="margin-top:16px">
+  <h3>Update Status</h3>
+  <form method="POST" action="{{ url_for('admin_returns.return_status', rid=rma.id) }}" class="toolbar" style="flex-wrap:wrap;gap:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Status
+      <select class="field" name="status" style="width:auto">
+        {% for s in statuses %}
+        <option value="{{ s }}" {{ 'selected' if rma.status==s }}>{{ s|title }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Refund amount
+      <input class="field" type="number" step="0.01" min="0" name="refund_amount"
+             value="{{ '%.2f'|format(rma.refund_amount) if rma.refund_amount else '' }}" style="width:auto" />
+    </label>
+    <label class="grow" style="flex:1;min-width:220px">Resolution
+      <input class="field grow" type="text" name="resolution" value="{{ rma.resolution or '' }}"
+             placeholder="e.g. Refund issued to UPI" />
+    </label>
+    <button class="btn primary" type="submit"><i class="bi bi-check2-circle"></i> Save</button>
+  </form>
+  <p class="subtle" style="margin-top:8px">
+    Marking a <strong>refund</strong> or <strong>return</strong> as <em>completed</em> flips the linked order to <em>refunded</em>.
+  </p>
+</div>
+{% endblock %}

@@ -204,6 +204,9 @@ class Order(Base):
 
     notes: Mapped[Optional[str]] = mapped_column(Text, default=None)
 
+    # v7.0 soft delete: non-null hides the order from listings without losing data.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
     )
@@ -377,6 +380,8 @@ class AdminUser(Base):
     full_name: Mapped[Optional[str]] = mapped_column(String(255), default=None)
     email: Mapped[Optional[str]] = mapped_column(String(255), default=None)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    totp_secret: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
 
@@ -450,7 +455,224 @@ class CrmProfile(Base):
     segment: Mapped[Optional[str]] = mapped_column(String(32), default=None)
     lifetime_value: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     orders_count: Mapped[int] = mapped_column(Integer, default=0)
+    marketing_consent: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+
+
+# ==========================================================================
+# v7.0 Enterprise models — commerce depth, fulfilment, admin/ops
+# ==========================================================================
+
+
+class Coupon(Base):
+    """A discount coupon (percent or flat) with usage limits + validity window."""
+
+    __tablename__ = "coupons"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="percent")  # percent | flat
+    value: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    min_order: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    max_discount: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), default=None)
+    usage_limit: Mapped[Optional[int]] = mapped_column(Integer, default=None)  # global cap
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    per_customer_limit: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    starts_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class CouponRedemption(Base):
+    """A record of a coupon being applied to an order."""
+
+    __tablename__ = "coupon_redemptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    coupon_id: Mapped[int] = mapped_column(ForeignKey("coupons.id", ondelete="CASCADE"), index=True)
+    code: Mapped[str] = mapped_column(String(64), index=True)
+    order_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("orders.id", ondelete="SET NULL"), index=True, default=None
+    )
+    wa_number: Mapped[Optional[str]] = mapped_column(String(32), index=True, default=None)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class GiftCard(Base):
+    """A stored-value gift card with a running balance."""
+
+    __tablename__ = "gift_cards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    initial_balance: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    balance: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    currency: Mapped[str] = mapped_column(String(8), default="INR")
+    issued_to: Mapped[Optional[str]] = mapped_column(String(32), default=None)  # wa_number
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class GiftCardTxn(Base):
+    """A gift-card ledger entry (issue / redeem / refund)."""
+
+    __tablename__ = "gift_card_txns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    gift_card_id: Mapped[int] = mapped_column(
+        ForeignKey("gift_cards.id", ondelete="CASCADE"), index=True
+    )
+    order_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("orders.id", ondelete="SET NULL"), default=None
+    )
+    kind: Mapped[str] = mapped_column(String(16), default="redeem")  # issue|redeem|refund
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    balance_after: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Bundle(Base):
+    """A bundle/combo product: several catalog items sold at a bundle price."""
+
+    __tablename__ = "bundles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255))
+    sku: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True, default=None)
+    price: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    currency: Mapped[str] = mapped_column(String(8), default="INR")
+    items: Mapped[Optional[str]] = mapped_column(Text, default="[]")  # JSON [{retailer_id, qty}]
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class WishlistItem(Base):
+    """A product a customer saved for later."""
+
+    __tablename__ = "wishlist_items"
+    __table_args__ = (UniqueConstraint("wa_number", "product_retailer_id", name="uq_wishlist"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    wa_number: Mapped[str] = mapped_column(String(32), index=True)
+    product_retailer_id: Mapped[str] = mapped_column(String(128))
+    product_name: Mapped[Optional[str]] = mapped_column(String(512), default=None)
+    price: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Cart(Base):
+    """A customer's working cart; used for abandoned-cart recovery."""
+
+    __tablename__ = "carts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    wa_number: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)  # active|abandoned|converted
+    currency: Mapped[str] = mapped_column(String(8), default="INR")
+    items: Mapped[Optional[str]] = mapped_column(Text, default="[]")  # JSON
+    subtotal: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    order_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("orders.id", ondelete="SET NULL"), default=None
+    )
+    recovery_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, index=True
+    )
+
+
+class ReturnRequest(Base):
+    """A return / refund / exchange request against an order."""
+
+    __tablename__ = "return_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rma_number: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
+    wa_number: Mapped[Optional[str]] = mapped_column(String(32), index=True, default=None)
+    kind: Mapped[str] = mapped_column(String(16), default="return")  # return|refund|exchange
+    reason: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    status: Mapped[str] = mapped_column(String(16), default="requested", index=True)
+    refund_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    resolution: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class Shipment(Base):
+    """A shipment created with a courier for an order."""
+
+    __tablename__ = "shipments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="manual")
+    awb: Mapped[Optional[str]] = mapped_column(String(64), index=True, default=None)
+    courier_name: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    label_url: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    tracking_url: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    status: Mapped[str] = mapped_column(String(32), default="created", index=True)
+    provider_shipment_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    pickup_scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    raw: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class SupportTicket(Base):
+    """A customer support ticket."""
+
+    __tablename__ = "support_tickets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticket_number: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    wa_number: Mapped[Optional[str]] = mapped_column(String(32), index=True, default=None)
+    subject: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)  # open|pending|resolved|closed
+    priority: Mapped[str] = mapped_column(String(16), default="normal")  # low|normal|high|urgent
+    assigned_to: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    order_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("orders.id", ondelete="SET NULL"), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class TicketMessage(Base):
+    """A message within a support ticket thread."""
+
+    __tablename__ = "ticket_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticket_id: Mapped[int] = mapped_column(
+        ForeignKey("support_tickets.id", ondelete="CASCADE"), index=True
+    )
+    author: Mapped[str] = mapped_column(String(128), default="customer")
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class LoginEvent(Base):
+    """An admin login attempt (success/failure) for the login-history view."""
+
+    __tablename__ = "login_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(128), index=True)
+    ip: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    user_agent: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    success: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)

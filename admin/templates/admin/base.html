@@ -29,15 +29,28 @@
       {% if crm_ui %}
       <a class="nav-link {{ 'active' if nav_active in ['admin_crm.crm_list','admin_crm.crm_detail'] }}" href="{{ url_for('admin_crm.crm_list') }}"><i class="bi bi-person-vcard"></i> Customer CRM</a>
       {% endif %}
+      {% if has_view('admin_returns.returns_list') %}<a class="nav-link {{ 'active' if nav_active == 'admin_returns.returns_list' }}" href="{{ url_for('admin_returns.returns_list') }}"><i class="bi bi-arrow-return-left"></i> Returns / RMA</a>{% endif %}
+      {% if has_view('admin_shipping.shipments_list') %}<a class="nav-link {{ 'active' if nav_active == 'admin_shipping.shipments_list' }}" href="{{ url_for('admin_shipping.shipments_list') }}"><i class="bi bi-truck"></i> Shipping</a>{% endif %}
+      {% if has_view('admin_promos.coupons_list') %}<a class="nav-link {{ 'active' if nav_active == 'admin_promos.coupons_list' }}" href="{{ url_for('admin_promos.coupons_list') }}"><i class="bi bi-tags"></i> Coupons</a>{% endif %}
+      {% if has_view('admin_promos.giftcards_list') %}<a class="nav-link {{ 'active' if nav_active == 'admin_promos.giftcards_list' }}" href="{{ url_for('admin_promos.giftcards_list') }}"><i class="bi bi-gift"></i> Gift Cards</a>{% endif %}
+      {% if has_view('admin_catalog.bundles_list') %}<a class="nav-link {{ 'active' if nav_active == 'admin_catalog.bundles_list' }}" href="{{ url_for('admin_catalog.bundles_list') }}"><i class="bi bi-boxes"></i> Bundles</a>{% endif %}
+      {% if has_view('admin_catalog.carts_list') %}<a class="nav-link {{ 'active' if nav_active == 'admin_catalog.carts_list' }}" href="{{ url_for('admin_catalog.carts_list') }}"><i class="bi bi-cart3"></i> Carts</a>{% endif %}
+      {% if has_view('admin_tickets.tickets_list') %}<a class="nav-link {{ 'active' if nav_active == 'admin_tickets.tickets_list' }}" href="{{ url_for('admin_tickets.tickets_list') }}"><i class="bi bi-life-preserver"></i> Support Tickets</a>{% endif %}
       <a class="nav-link {{ 'active' if nav_active == 'admin.orders' }}" href="{{ url_for('admin.orders') }}"><i class="bi bi-box-seam"></i> Order Lookup</a>
       <a class="nav-link {{ 'active' if nav_active in ['admin.customers','admin.customer_detail'] }}" href="{{ url_for('admin.customers') }}"><i class="bi bi-people"></i> Customers</a>
       <div class="nav-section">Insights</div>
       <a class="nav-link {{ 'active' if nav_active == 'admin.analytics_page' }}" href="{{ url_for('admin.analytics_page') }}"><i class="bi bi-bar-chart"></i> Analytics</a>
+      {% if has_view('admin_ops.payments_dashboard') %}<a class="nav-link {{ 'active' if nav_active == 'admin_ops.payments_dashboard' }}" href="{{ url_for('admin_ops.payments_dashboard') }}"><i class="bi bi-credit-card"></i> Payments</a>{% endif %}
+      {% if has_view('admin_reports.reports_home') %}<a class="nav-link {{ 'active' if nav_active == 'admin_reports.reports_home' }}" href="{{ url_for('admin_reports.reports_home') }}"><i class="bi bi-file-earmark-bar-graph"></i> Reports</a>{% endif %}
       <a class="nav-link {{ 'active' if nav_active == 'admin.search_page' }}" href="{{ url_for('admin.search_page') }}"><i class="bi bi-search"></i> Global Search</a>
       <div class="nav-section">System</div>
+      {% if has_view('admin_broadcast.broadcast_page') and is_admin_role %}<a class="nav-link {{ 'active' if nav_active == 'admin_broadcast.broadcast_page' }}" href="{{ url_for('admin_broadcast.broadcast_page') }}"><i class="bi bi-megaphone"></i> Broadcast</a>{% endif %}
+      {% if has_view('admin_ops.employees') and is_admin_role %}<a class="nav-link {{ 'active' if nav_active == 'admin_ops.employees' }}" href="{{ url_for('admin_ops.employees') }}"><i class="bi bi-person-badge"></i> Employees</a>{% endif %}
       {% if users_ui %}
       <a class="nav-link {{ 'active' if nav_active in ['admin_users.users_list','admin_users.user_new','admin_users.user_edit'] }}" href="{{ url_for('admin_users.users_list') }}"><i class="bi bi-shield-lock"></i> Admin Users</a>
       {% endif %}
+      {% if has_view('admin_settings.settings_page') and is_admin_role %}<a class="nav-link {{ 'active' if nav_active == 'admin_settings.settings_page' }}" href="{{ url_for('admin_settings.settings_page') }}"><i class="bi bi-gear"></i> Settings</a>{% endif %}
+      {% if has_view('admin_security.security_overview') %}<a class="nav-link {{ 'active' if nav_active and nav_active.startswith('admin_security.') }}" href="{{ url_for('admin_security.security_overview') }}"><i class="bi bi-shield-check"></i> Security</a>{% endif %}
       <a class="nav-link" href="/api/docs" target="_blank"><i class="bi bi-braces"></i> API Docs</a>
     </nav>
     <div style="padding:14px 18px;border-top:1px solid rgba(255,255,255,0.08)">

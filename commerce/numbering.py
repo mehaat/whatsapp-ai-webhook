@@ -53,10 +53,19 @@ def _supports_for_update(session) -> bool:
 
 def next_invoice_number(session) -> str:
     """Return the next invoice number, e.g. ``INV-2026-000001``."""
+    return next_number(session, "invoice", "INV")
+
+
+def next_number(session, counter_key: str, prefix: str) -> str:
+    """Generic sequential number generator, e.g. ``RMA-2026-000001``.
+
+    Used for RMAs, support tickets and any other per-year sequence. Must be
+    called inside an open session; the caller commits.
+    """
     from database.models import Counter
 
     year = _year()
-    key = f"invoice:{year}"
+    key = f"{counter_key}:{year}"
     row = session.get(Counter, key)
     if row is None:
         row = Counter(name=key, value=0)
@@ -64,4 +73,4 @@ def next_invoice_number(session) -> str:
         session.flush()
     row.value = (row.value or 0) + 1
     session.flush()
-    return f"INV-{year}-{row.value:06d}"
+    return f"{prefix}-{year}-{row.value:06d}"

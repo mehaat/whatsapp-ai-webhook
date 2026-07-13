@@ -1,0 +1,17 @@
+.git
+.github
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+*.db
+mehaat.db
+mehaat_admin.db
+invoices/
+.env
+_trash/
+docs/
+*.md
+!README.md

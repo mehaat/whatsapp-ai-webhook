@@ -1,0 +1,48 @@
+# ME-HAAT Fashion AI Bot v7.0 — local/staging stack.
+# Usage: cp .env.example .env && docker compose up --build
+#
+# By default the app runs on SQLite (durable via the app-data volume). To use
+# Postgres instead, uncomment the `db` service, set DATABASE_URL below to the
+# postgres URL, and add `depends_on: [db]` to the app service.
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      # Commerce data + invoices persist on the mounted volume.
+      DATABASE_URL: sqlite:////var/data/mehaat.db
+      INVOICE_OUTPUT_DIR: /var/data/invoices
+      TOKEN_STORE_PATH: /var/data/shop_tokens.json
+      ADMIN_DB_PATH: /var/data/mehaat_admin.db
+      # To use Postgres/Redis, point these at the services below:
+      # DATABASE_URL: postgresql+psycopg2://mehaat:mehaat@db:5432/mehaat
+      # REDIS_URL: redis://redis:6379/0
+    volumes:
+      - app-data:/var/data
+    restart: unless-stopped
+    # depends_on:
+    #   - db
+    #   - redis
+
+  # Uncomment to run PostgreSQL (managed durable store).
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: mehaat
+  #     POSTGRES_PASSWORD: mehaat
+  #     POSTGRES_DB: mehaat
+  #   volumes:
+  #     - pg-data:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+  # Uncomment to run Redis (future queue/rate-limit backend).
+  # redis:
+  #   image: redis:7-alpine
+  #   restart: unless-stopped
+
+volumes:
+  app-data:
+  # pg-data:

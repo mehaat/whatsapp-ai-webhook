@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_VERSION = "6.1"
+APP_VERSION = "7.0"
 
 
 def _split_scopes(raw: str) -> List[str]:
@@ -180,6 +180,43 @@ class Config:
     default_admin_role: str = field(
         default_factory=lambda: os.environ.get("DEFAULT_ADMIN_ROLE", "staff").strip().lower()
     )
+
+    # --- v7.0 Enterprise ---
+    # Commerce depth toggles.
+    coupons_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("COUPONS_ENABLED", "true"), True)
+    )
+    abandoned_cart_hours: int = field(
+        default_factory=lambda: int(os.environ.get("ABANDONED_CART_HOURS", "6"))
+    )
+    # Shipping courier (adapter pattern; "manual" needs no account).
+    shipping_provider: str = field(
+        default_factory=lambda: os.environ.get("SHIPPING_PROVIDER", "manual").strip().lower()
+    )
+    shiprocket_email: str = field(default_factory=lambda: os.environ.get("SHIPROCKET_EMAIL", ""))
+    shiprocket_password: str = field(
+        default_factory=lambda: os.environ.get("SHIPROCKET_PASSWORD", "")
+    )
+    delhivery_token: str = field(default_factory=lambda: os.environ.get("DELHIVERY_TOKEN", ""))
+    pickup_pincode: str = field(default_factory=lambda: os.environ.get("PICKUP_PINCODE", ""))
+    # Low-stock threshold for restock alerts.
+    low_stock_threshold: int = field(
+        default_factory=lambda: int(os.environ.get("LOW_STOCK_THRESHOLD", "3"))
+    )
+    # Admin security: 2FA + IP allowlist (comma-separated CIDRs/IPs; empty = allow all).
+    admin_2fa_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("ADMIN_2FA_ENABLED", "false"), False)
+    )
+    admin_ip_allowlist: str = field(
+        default_factory=lambda: os.environ.get("ADMIN_IP_ALLOWLIST", "")
+    )
+    # Observability.
+    sentry_dsn: str = field(default_factory=lambda: os.environ.get("SENTRY_DSN", ""))
+    metrics_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("METRICS_ENABLED", "true"), True)
+    )
+    # Optional Redis URL to back the job queue / rate limits (future-proofing).
+    redis_url: str = field(default_factory=lambda: os.environ.get("REDIS_URL", ""))
 
     # --- Business / invoice identity (used on PDF invoices) ---
     business_name: str = field(

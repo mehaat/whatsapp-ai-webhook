@@ -1,0 +1,86 @@
+{% extends "admin/base.html" %}
+{% block title %}Shipment #{{ shipment.id }}{% endblock %}
+{% block heading %}Shipment #{{ shipment.id }}{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar" style="margin-bottom:14px">
+  <a class="btn ghost" href="{{ url_for('admin_shipping.shipments_list') }}"><i class="bi bi-arrow-left"></i> All shipments</a>
+  {% if order %}
+  <a class="btn ghost" href="{{ url_for('admin_orders.order_detail', order_id=order.id) }}"><i class="bi bi-cart-check"></i> Order {{ order.order_number }}</a>
+  {% endif %}
+</div>
+
+<div class="card-surface panel">
+  <h3>Summary</h3>
+  <table class="tbl">
+    <tr><th style="width:180px">Status</th>
+      <td><span class="pill {{ 'good' if shipment.status=='delivered' else 'bad' if shipment.status in ['returned','cancelled'] else 'info' }}">{{ shipment.status.replace('_',' ')|title }}</span></td></tr>
+    <tr><th>Provider</th><td>{{ shipment.provider|title }}</td></tr>
+    <tr><th>Courier</th><td>{{ shipment.courier_name or '—' }}</td></tr>
+    <tr><th>AWB</th><td class="mono">{{ shipment.awb or '—' }}</td></tr>
+    <tr><th>Order ID</th><td class="mono">{{ shipment.order_id }}</td></tr>
+    <tr><th>Provider shipment ID</th><td class="mono">{{ shipment.provider_shipment_id or '—' }}</td></tr>
+    <tr><th>Tracking URL</th>
+      <td>{% if shipment.tracking_url %}<a href="{{ shipment.tracking_url }}" target="_blank">{{ shipment.tracking_url }}</a>{% else %}—{% endif %}</td></tr>
+    <tr><th>Label</th>
+      <td>{% if shipment.label_url %}<a href="{{ shipment.label_url }}" target="_blank">View label</a>{% else %}—{% endif %}</td></tr>
+    <tr><th>Pickup scheduled</th>
+      <td class="subtle">{{ shipment.pickup_scheduled_at.replace('T',' ')[:19] if shipment.pickup_scheduled_at else 'Not scheduled' }}</td></tr>
+    <tr><th>Created</th><td class="subtle">{{ (shipment.created_at or '').replace('T',' ')[:19] }}</td></tr>
+  </table>
+</div>
+
+<div class="card-surface panel">
+  <h3>Actions</h3>
+  <div class="toolbar">
+    <form method="POST" action="{{ url_for('admin_shipping.refresh_tracking', sid=shipment.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <button class="btn primary" type="submit"><i class="bi bi-arrow-repeat"></i> Refresh Tracking</button>
+    </form>
+    <form method="POST" action="{{ url_for('admin_shipping.schedule_pickup', sid=shipment.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <button class="btn ghost" type="submit"><i class="bi bi-calendar-check"></i> Schedule Pickup</button>
+    </form>
+  </div>
+  <p class="subtle" style="margin-top:8px">Creating a shipment and scheduling a pickup require the <b>staff</b> role.</p>
+</div>
+
+{% if order %}
+<div class="card-surface panel">
+  <h3>Ship to</h3>
+  <table class="tbl">
+    <tr><th style="width:180px">Customer</th><td>{{ order.customer_name or '—' }}</td></tr>
+    <tr><th>Phone</th><td class="mono">{{ order.wa_number or '—' }}</td></tr>
+    <tr><th>City / State</th><td>{{ order.city or '—' }}{% if order.state %}, {{ order.state }}{% endif %}</td></tr>
+    <tr><th>Total</th><td>{{ order.currency }} {{ '%.2f'|format(order.total_amount) }}</td></tr>
+  </table>
+
+  <h3 style="margin-top:16px">Items</h3>
+  <table class="tbl">
+    <thead><tr><th>Product</th><th>Variant</th><th class="tabular">Qty</th></tr></thead>
+    <tbody>
+      {% for it in order.get('items', []) %}
+      <tr>
+        <td>{{ it.product_name or '—' }}</td>
+        <td>{{ it.variant or '—' }}</td>
+        <td class="tabular">{{ it.quantity }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="subtle">No line items.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

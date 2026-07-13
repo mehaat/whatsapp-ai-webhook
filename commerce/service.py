@@ -533,8 +533,23 @@ class OrderService:
             return session.query(Order).filter_by(order_number=order_number).first()
         return None
 
+    def soft_delete_order(self, order_id: int, *, actor: str = "admin", ip=None):
+        """Soft-delete an order (hidden from listings; data retained)."""
+        from database.db import session_scope
+        from database.models import Order
+
+        with session_scope() as session:
+            order = session.get(Order, order_id)
+            if order is None:
+                return None
+            order.deleted_at = datetime.now(timezone.utc)
+            self._audit(session, actor, "order.soft_delete", "order", str(order.id), None, ip)
+            return _order_to_dict(order)
+
     @staticmethod
     def _apply_filters(q, Order, status, payment_status, query, date_from, date_to):
+        # Exclude soft-deleted orders from all listings/counts.
+        q = q.filter(Order.deleted_at.is_(None))
         if status:
             q = q.filter(Order.status == status)
         if payment_status:

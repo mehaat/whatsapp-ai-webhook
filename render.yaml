@@ -146,3 +146,20 @@ services:
         value: "false"
       - key: DEFAULT_ADMIN_ROLE
         value: "staff"
+      # --- v7.0 ---
+      - key: SHIPPING_PROVIDER
+        value: "manual"
+      - key: SHIPROCKET_EMAIL
+        sync: false
+      - key: SHIPROCKET_PASSWORD
+        sync: false
+      - key: DELHIVERY_TOKEN
+        sync: false
+      - key: ADMIN_2FA_ENABLED
+        value: "false"
+      - key: ADMIN_IP_ALLOWLIST
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: METRICS_ENABLED
+        value: "true"

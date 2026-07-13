@@ -1,0 +1,79 @@
+{% extends "admin/base.html" %}
+{% block title %}Bundles{% endblock %}
+{% block heading %}Product Bundles{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="card-surface panel">
+  <h3>New Bundle</h3>
+  <form method="POST" action="{{ url_for('admin_catalog.bundle_new') }}" class="toolbar" style="flex-wrap:wrap;gap:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Name
+      <input class="field" type="text" name="name" placeholder="Festive Combo" required />
+    </label>
+    <label>SKU
+      <input class="field" type="text" name="sku" placeholder="BND-001" style="width:auto" />
+    </label>
+    <label>Price
+      <input class="field" type="number" step="0.01" min="0" name="price" value="0" style="width:auto" />
+    </label>
+    <label>Currency
+      <input class="field" type="text" name="currency" value="INR" style="width:90px" />
+    </label>
+    <label class="grow" style="flex:1;min-width:240px">Items (one <code>retailer_id:qty</code> per line)
+      <textarea class="field grow" name="items" rows="3" placeholder="SKU-1:2&#10;SKU-2:1"></textarea>
+    </label>
+    <button class="btn primary" type="submit"><i class="bi bi-plus-circle"></i> Create Bundle</button>
+  </form>
+</div>
+
+<div class="card-surface panel" style="margin-top:16px">
+  <h3>Bundles <span class="subtle">· {{ bundles|length }}</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Name</th><th>SKU</th><th class="tabular">Price</th><th>Items</th>
+        <th>Active</th><th>Created</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in bundles %}
+      <tr>
+        <td>{{ b.name }}</td>
+        <td class="mono">{{ b.sku or '—' }}</td>
+        <td class="tabular">{{ b.currency }} {{ '%.2f'|format(b.price) }}</td>
+        <td>
+          {% for it in b['items'] %}<span class="pill info">{{ it.qty }}× {{ it.retailer_id }}</span> {% else %}—{% endfor %}
+        </td>
+        <td>
+          <span class="pill {{ 'good' if b.active else 'bad' }}">{{ 'Active' if b.active else 'Inactive' }}</span>
+        </td>
+        <td class="subtle">{{ (b.created_at or '')[:16].replace('T',' ') }}</td>
+        <td>
+          {% if b.active %}
+          <form method="POST" action="{{ url_for('admin_catalog.bundle_deactivate', bid=b.id) }}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button class="btn ghost" type="submit"><i class="bi bi-slash-circle"></i> Deactivate</button>
+          </form>
+          {% else %}<span class="subtle">—</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7"><div class="empty"><i class="bi bi-boxes"></i>No bundles yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

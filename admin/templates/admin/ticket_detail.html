@@ -1,0 +1,90 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ ticket.ticket_number }}{% endblock %}
+{% block heading %}Ticket {{ ticket.ticket_number }}{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar" style="margin-bottom:16px">
+  <a class="btn ghost" href="{{ url_for('admin_tickets.tickets_list') }}"><i class="bi bi-arrow-left"></i> Back to Tickets</a>
+</div>
+
+<div class="grid-2">
+  <div class="card-surface panel">
+    <h3>{{ ticket.subject }}</h3>
+    <table class="tbl">
+      <tbody>
+        <tr><td class="subtle">Status</td><td><span class="pill {{ 'good' if ticket.status=='resolved' else 'muted' if ticket.status=='closed' else 'warn' if ticket.status=='pending' else 'info' }}">{{ ticket.status|title }}</span></td></tr>
+        <tr><td class="subtle">Priority</td><td>{{ ticket.priority|title }}</td></tr>
+        <tr><td class="subtle">Customer</td><td class="mono">{{ ticket.wa_number or '—' }}</td></tr>
+        <tr><td class="subtle">Assigned to</td><td>{{ ticket.assigned_to or '—' }}</td></tr>
+        <tr><td class="subtle">Created</td><td class="subtle">{{ (ticket.created_at or '')[:16].replace('T',' ') }}</td></tr>
+        {% if order %}
+        <tr><td class="subtle">Order</td><td class="mono">{{ order.order_number }}</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card-surface panel">
+    <h3>Actions</h3>
+    <form method="POST" action="{{ url_for('admin_tickets.ticket_status', tid=ticket.id) }}" style="margin-bottom:18px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label for="status">Status</label>
+      <div class="toolbar">
+        <select class="field" id="status" name="status" style="width:auto">
+          {% for s in statuses %}
+          <option value="{{ s }}" {{ 'selected' if ticket.status==s }}>{{ s|title }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn primary" type="submit"><i class="bi bi-check2"></i> Update</button>
+      </div>
+    </form>
+
+    <form method="POST" action="{{ url_for('admin_tickets.ticket_assign', tid=ticket.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label for="username">Assign to</label>
+      <div class="toolbar">
+        <input class="field" id="username" name="username" list="agents" style="width:auto"
+               value="{{ ticket.assigned_to or '' }}" placeholder="username (blank to clear)" />
+        <datalist id="agents">
+          {% for u in users %}<option value="{{ u }}"></option>{% endfor %}
+        </datalist>
+        <button class="btn primary" type="submit"><i class="bi bi-person-check"></i> Assign</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card-surface panel mt">
+  <h3>Conversation</h3>
+  {% for m in ticket.messages %}
+  <div class="pill" style="display:block;padding:12px 14px;margin-bottom:10px">
+    <div class="subtle" style="margin-bottom:4px">
+      <strong>{{ m.author }}</strong> · {{ (m.created_at or '')[:16].replace('T',' ') }}
+    </div>
+    <div style="white-space:pre-wrap">{{ m.body }}</div>
+  </div>
+  {% else %}
+  <div class="empty"><i class="bi bi-chat-left-text"></i>No messages yet.</div>
+  {% endfor %}
+
+  <form method="POST" action="{{ url_for('admin_tickets.ticket_reply', tid=ticket.id) }}" style="margin-top:14px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label for="body">Reply</label>
+    <textarea class="field" id="body" name="body" rows="3" placeholder="Type your reply…" required></textarea>
+    <div class="toolbar" style="margin-top:12px">
+      <button class="btn primary" type="submit"><i class="bi bi-send"></i> Send reply</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

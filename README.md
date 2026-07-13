@@ -1,6 +1,18 @@
-# ME-HAAT Fashion AI Bot v6.1 Enterprise Commerce Edition
+# ME-HAAT Fashion AI Bot v7.0 Enterprise Edition
 
-Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — full **Shopify OAuth**, live product cards, catalog ordering, automatic Shopify draft orders, payment links, PDF invoices, live order tracking, a login-protected admin dashboard with an Orders module + analytics, a Customer CRM, multi-user roles, background jobs, inventory reservation, and a documented REST API.
+Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — full **Shopify OAuth**, catalog ordering, automatic Shopify draft orders, payment links, PDF invoices/labels, live order tracking, coupons & gift cards, returns/RMA, shipping, a Customer CRM, support tickets, multi-user roles with 2FA, background jobs, inventory reservation, reporting, a documented REST API, and Docker/CI deployment.
+
+## What's New in v7.0
+
+Additive over v6.1 — all prior features preserved. See **`docs/V7_ROADMAP.md`** for the full status of all 20 enterprise categories (done / foundation / planned).
+
+- **Commerce depth** — coupon & discount engine, gift cards, bundle products, wishlist, abandoned-cart recovery, and a return/refund/exchange (RMA) workflow. Admin consoles under `/admin/promos`, `/admin/catalog`, `/admin/returns`; conversational return & support intents on WhatsApp.
+- **Fulfilment & shipping** — a courier adapter (`shipping/`) with Shiprocket, Delhivery and an always-works Manual provider; shipment lifecycle, tracking, ReportLab **shipping labels + packing slips**, and pickup scheduling at `/admin/shipping`.
+- **Admin & ops** — support tickets, a Settings UI, Payments and Employee dashboards, a WhatsApp **broadcast manager** (consent-aware), and GST/Sales/Inventory/Customer/Product **reports** with CSV/Excel/PDF export.
+- **Security** — admin **2FA (TOTP)**, IP allowlist, and login history, on top of the existing JWT/RBAC/API-keys/audit/CSRF/rate-limiting.
+- **Platform & ops** — **Dockerfile + docker-compose + GitHub Actions CI + Nginx** sample, **Alembic** migrations (alongside the boot-time auto-migrate), order **soft-delete**, optional **Sentry**, and a Prometheus **`/metrics`** endpoint.
+
+## What's New in v6.1
 
 ## What's New in v6.1
 

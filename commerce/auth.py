@@ -142,6 +142,23 @@ def is_request_authenticated() -> bool:
         if provided and provided == api_key:
             return True
 
+    # 2b) Database-issued developer API key (v8.0), e.g. "mh_live_...".
+    provided = request.headers.get("X-API-Key", "") or ""
+    if provided.startswith("mh_live_"):
+        try:
+            from commerce.apikeys import check_rate_limit, verify_key
+
+            record = verify_key(provided)
+            if record is not None:
+                if not check_rate_limit(record["prefix"], record["rate_limit_per_min"]):
+                    from flask import g
+
+                    g.api_key_rate_limited = True
+                    return False
+                return True
+        except Exception as exc:  # noqa: BLE001 - key auth must not 500 the API
+            logger.debug("API | DB api-key check failed: %s", exc)
+
     # 3) Authenticated admin dashboard session.
     try:
         if is_authenticated():
@@ -170,6 +187,13 @@ def require_api_auth(view: Callable) -> Callable:
     def wrapped(*args: Any, **kwargs: Any):
         if is_request_authenticated():
             return view(*args, **kwargs)
+        try:
+            from flask import g
+
+            if g.get("api_key_rate_limited"):
+                return jsonify({"error": "rate_limited"}), 429
+        except Exception:  # noqa: BLE001
+            pass
         return jsonify({"error": "unauthorized"}), 401
 
     return wrapped

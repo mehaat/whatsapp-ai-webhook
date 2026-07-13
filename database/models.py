@@ -206,6 +206,8 @@ class Order(Base):
 
     # v7.0 soft delete: non-null hides the order from listings without losing data.
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    # v8.0 multi-tenant: which store/brand this order belongs to (null = default).
+    tenant_id: Mapped[Optional[int]] = mapped_column(Integer, index=True, default=None)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
@@ -327,6 +329,9 @@ class AuditLog(Base):
     entity_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, default=None)
     detail: Mapped[Optional[str]] = mapped_column(Text, default=None)
     ip: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    # v8.0 tamper-evident hash chain (each row hashes its content + prev row hash).
+    prev_hash: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    row_hash: Mapped[Optional[str]] = mapped_column(String(64), default=None, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
     )
@@ -676,3 +681,85 @@ class LoginEvent(Base):
     user_agent: Mapped[Optional[str]] = mapped_column(String(255), default=None)
     success: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
+# ==========================================================================
+# v8.0 Enterprise-scale models — multi-tenant, developer portal, compliance
+# ==========================================================================
+
+
+class Tenant(Base):
+    """A store/brand tenant for multi-store / multi-tenant deployments.
+
+    A tenant is resolved from the inbound WhatsApp phone_number_id, the Shopify
+    shop domain, an ``X-Tenant`` API header, or the request host. When
+    MULTI_TENANT_ENABLED is false everything runs under an implicit default
+    tenant, so single-store deployments are unaffected.
+    """
+
+    __tablename__ = "tenants"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    shopify_domain: Mapped[Optional[str]] = mapped_column(String(255), index=True, default=None)
+    whatsapp_phone_number_id: Mapped[Optional[str]] = mapped_column(
+        String(64), index=True, default=None
+    )
+    catalog_id: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    host: Mapped[Optional[str]] = mapped_column(String(255), index=True, default=None)
+    config: Mapped[Optional[str]] = mapped_column(Text, default="{}")  # JSON overrides
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class ApiKey(Base):
+    """A developer API key (hashed at rest) with scopes + a rate limit."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    prefix: Mapped[str] = mapped_column(String(16), unique=True, index=True)  # public id
+    key_hash: Mapped[str] = mapped_column(String(128), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    tenant_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("tenants.id", ondelete="SET NULL"), index=True, default=None
+    )
+    scopes: Mapped[Optional[str]] = mapped_column(Text, default="read")  # csv
+    rate_limit_per_min: Mapped[int] = mapped_column(Integer, default=120)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class PiiAccessLog(Base):
+    """A record of access to a customer's personal data (compliance)."""
+
+    __tablename__ = "pii_access_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor: Mapped[str] = mapped_column(String(128), index=True)
+    subject_wa_number: Mapped[str] = mapped_column(String(32), index=True)
+    action: Mapped[str] = mapped_column(String(64))  # view|export|erase
+    ip: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
+class DataRequest(Base):
+    """A GDPR/DPDP data-subject request (export or erasure)."""
+
+    __tablename__ = "data_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(16))  # export | erasure
+    subject_wa_number: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|completed|failed
+    requested_by: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    result_path: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    detail: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)

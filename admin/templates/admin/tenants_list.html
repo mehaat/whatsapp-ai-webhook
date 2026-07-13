@@ -1,0 +1,92 @@
+{% extends "admin/base.html" %}
+{% block title %}Stores{% endblock %}
+{% block heading %}Stores &amp; Tenants{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar" style="margin-bottom:16px">
+  <span class="subtle">
+    Multi-store tenants. Currently viewing:
+    {% if active_tenant_id %}
+      {% set current = tenants | selectattr('id', 'equalto', active_tenant_id) | list | first %}
+      <span class="pill info">{{ current.name if current else 'Store #' ~ active_tenant_id }}</span>
+    {% else %}
+      <span class="pill good">All stores</span>
+    {% endif %}
+  </span>
+  <span class="spacer" style="flex:1"></span>
+  {% if active_tenant_id %}
+  <form method="POST" action="{{ url_for('admin_tenants.tenant_switch') }}" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="tenant_id" value="all" />
+    <button class="btn ghost" type="submit"><i class="bi bi-x-circle"></i> View all stores</button>
+  </form>
+  {% endif %}
+  <a class="btn primary" href="{{ url_for('admin_tenants.tenant_new') }}"><i class="bi bi-shop"></i> New Store</a>
+</div>
+
+<div class="card-surface panel">
+  <h3>Stores <span class="subtle">· {{ tenants|length }} total</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Slug</th><th>Name</th><th>WhatsApp phone id</th>
+        <th>Shopify domain</th><th>Host</th><th>Active</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tenants %}
+      <tr {{ 'style=background:rgba(59,130,246,0.08)' if t.id == active_tenant_id }}>
+        <td class="mono">{{ t.slug }}</td>
+        <td>{{ t.name }}</td>
+        <td class="mono subtle">{{ t.whatsapp_phone_number_id or '—' }}</td>
+        <td class="mono subtle">{{ t.shopify_domain or '—' }}</td>
+        <td class="mono subtle">{{ t.host or '—' }}</td>
+        <td>
+          {% if t.active %}
+          <span class="pill good">Active</span>
+          {% else %}
+          <span class="pill bad">Disabled</span>
+          {% endif %}
+        </td>
+        <td style="white-space:nowrap">
+          {% if t.id == active_tenant_id %}
+          <span class="pill info"><i class="bi bi-eye"></i> Viewing</span>
+          {% else %}
+          <form method="POST" action="{{ url_for('admin_tenants.tenant_switch') }}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <input type="hidden" name="tenant_id" value="{{ t.id }}" />
+            <button class="pill info" type="submit" style="border:none;cursor:pointer"><i class="bi bi-eye"></i> View as</button>
+          </form>
+          {% endif %}
+          <a class="pill info" href="{{ url_for('admin_tenants.tenant_edit', tid=t.id) }}"><i class="bi bi-pencil"></i> Edit</a>
+          <form method="POST" action="{{ url_for('admin_tenants.tenant_toggle', tid=t.id) }}"
+                style="display:inline"
+                onsubmit="return confirm('{{ 'Deactivate' if t.active else 'Activate' }} store {{ t.slug }}?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button class="pill {{ 'warn' if t.active else 'good' }}" type="submit" style="border:none;cursor:pointer">
+              <i class="bi bi-{{ 'pause-circle' if t.active else 'play-circle' }}"></i>
+              {{ 'Deactivate' if t.active else 'Activate' }}
+            </button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7"><div class="empty"><i class="bi bi-shop"></i>No stores yet. Create one to get started.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

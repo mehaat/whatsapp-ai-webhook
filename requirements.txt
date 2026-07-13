@@ -1,4 +1,4 @@
-# ME-HAAT Fashion AI Bot v6.0 Enterprise Commerce Edition — runtime dependencies
+# ME-HAAT Fashion AI Bot v8.0 Enterprise Edition — runtime dependencies
 # Core — unchanged
 Flask==3.0.3
 gunicorn==22.0.0
@@ -36,6 +36,13 @@ alembic>=1.13.0
 # Optional error monitoring — only used when SENTRY_DSN is set. Uncomment to
 # enable Sentry; the app degrades gracefully when it is absent.
 # sentry-sdk>=2.0.0
+
+# v8.0 additions — distributed background processing.
+# celery + redis power the Celery/Redis queue backend (QUEUE_BACKEND=celery).
+# With QUEUE_BACKEND=inprocess (default) they are imported lazily and the app
+# runs on the in-process thread queue, so these are effectively optional.
+celery>=5.3.0
+redis>=5.0.0
 # NOTE: payment gateways (Razorpay/Stripe/Cashfree/PhonePe) are integrated via
 # their REST APIs using the existing `requests` dependency — no gateway SDKs
 # are required, keeping the dependency surface small.

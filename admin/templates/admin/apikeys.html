@@ -1,0 +1,97 @@
+{% extends "admin/base.html" %}
+{% block title %}API Keys{% endblock %}
+{% block heading %}Developer &amp; API Keys{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar" style="margin-bottom:16px">
+  <span class="subtle">Programmatic access keys for the Commerce API. The full key is shown only once, at creation.</span>
+  <span class="spacer" style="flex:1"></span>
+  <a class="btn" href="/developers" target="_blank"><i class="bi bi-journal-code"></i> Developer Portal</a>
+  <a class="btn" href="/api/docs" target="_blank"><i class="bi bi-braces"></i> API Docs</a>
+</div>
+
+<div class="card-surface panel" style="margin-bottom:16px">
+  <h3>Create a new API key</h3>
+  <form method="POST" action="{{ url_for('admin_developer.keys_create') }}"
+        style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:12px;align-items:end">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label style="display:block">
+      <span class="subtle">Name</span>
+      <input class="inp" type="text" name="name" required maxlength="255"
+             placeholder="e.g. Fulfilment integration" style="width:100%" />
+    </label>
+    <label style="display:block">
+      <span class="subtle">Scopes (CSV)</span>
+      <input class="inp" type="text" name="scopes" value="read" maxlength="255"
+             placeholder="read,write" style="width:100%" />
+    </label>
+    <label style="display:block">
+      <span class="subtle">Rate limit / min</span>
+      <input class="inp" type="number" name="rate_limit_per_min" value="120" min="0"
+             style="width:100%" />
+    </label>
+    <button class="btn primary" type="submit"><i class="bi bi-key"></i> Issue Key</button>
+  </form>
+</div>
+
+<div class="card-surface panel">
+  <h3>Issued keys <span class="subtle">· {{ keys|length }} total</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Prefix</th><th>Name</th><th>Scopes</th><th>Rate/min</th>
+        <th>Status</th><th>Last used</th><th>Created</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for k in keys %}
+      <tr>
+        <td class="mono">mh_live_{{ k.prefix }}…</td>
+        <td>{{ k.name }}</td>
+        <td>
+          {% for s in k.scopes %}<span class="pill info">{{ s }}</span> {% endfor %}
+          {% if not k.scopes %}<span class="subtle">—</span>{% endif %}
+        </td>
+        <td>{{ k.rate_limit_per_min }}</td>
+        <td>
+          {% if k.active %}
+          <span class="pill good">Active</span>
+          {% else %}
+          <span class="pill bad">Revoked</span>
+          {% endif %}
+        </td>
+        <td class="subtle">{{ (k.last_used_at or '')[:16].replace('T',' ') or '—' }}</td>
+        <td class="subtle">{{ (k.created_at or '')[:16].replace('T',' ') or '—' }}</td>
+        <td style="white-space:nowrap">
+          {% if k.active %}
+          <form method="POST" action="{{ url_for('admin_developer.keys_revoke', kid=k.id) }}"
+                style="display:inline" onsubmit="return confirm('Revoke key mh_live_{{ k.prefix }}? This cannot be undone.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button class="pill bad" type="submit" style="border:none;cursor:pointer"><i class="bi bi-slash-circle"></i> Revoke</button>
+          </form>
+          {% else %}
+          <span class="subtle">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8"><div class="empty"><i class="bi bi-key"></i>No API keys yet. Issue one above.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{% endblock %}

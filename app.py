@@ -1,9 +1,10 @@
 """
 app.py
 ------
-ME-HAAT Fashion AI Bot v6.1 Enterprise Commerce Edition
+ME-HAAT Fashion AI Bot v8.0 Enterprise Edition
 Production WhatsApp AI Sales Assistant + Commerce Platform — Shopify OAuth Edition.
-v6.1 adds CRM, multi-user RBAC, background jobs, inventory reservation, REST API docs.
+v8.0 adds Celery/Redis processing, Prometheus/Grafana/Sentry monitoring, a
+developer portal with API keys, multi-tenant architecture, and compliance tooling.
 
 Entry point for the Flask application. Wires together:
     - shopify.auth   : OAuth install/callback routes
@@ -107,9 +108,17 @@ register_middleware(app)
 
 # v7.0 observability: optional Sentry error monitoring (no-op unless SENTRY_DSN).
 try:
+    from flask import g as _g
     from utils.observability import incr, init_sentry
 
     init_sentry()
+
+    @app.before_request
+    def _obs_start():  # noqa: ANN001
+        try:
+            _g._obs_t0 = time.perf_counter()
+        except Exception:  # noqa: BLE001
+            pass
 
     @app.after_request
     def _count_request(response):  # noqa: ANN001
@@ -117,6 +126,10 @@ try:
             incr("http_requests_total")
             if response.status_code >= 500:
                 incr("http_5xx_total")
+            t0 = getattr(_g, "_obs_t0", None)
+            if t0 is not None:
+                incr("http_request_duration_seconds_sum", time.perf_counter() - t0)
+                incr("http_request_duration_seconds_count", 1.0)
         except Exception:  # noqa: BLE001
             pass
         return response
@@ -161,13 +174,26 @@ try:
         ("Broadcast manager", _bp("admin.broadcast_routes", "admin_broadcast_bp")),
         ("Security (2FA/login history)", _bp("admin.security_routes", "admin_security_bp")),
         ("Reports", _bp("admin.reports_routes", "admin_reports_bp")),
+        # v8.0 surfaces.
+        ("Multi-tenant / Stores", _bp("admin.tenants_routes", "admin_tenants_bp")),
+        ("Developer portal / API keys", _bp("admin.developer_routes", "admin_developer_bp")),
+        ("Compliance / audit", _bp("admin.compliance_routes", "admin_compliance_bp")),
+        ("Developer portal (public)", _bp("commerce.dev_portal", "dev_portal_bp")),
     ):
         try:
             app.register_blueprint(_importer())
         except Exception as exc:  # noqa: BLE001 - each surface is optional
             logger.error("COMMERCE | %s unavailable: %s", _label, exc)
 
-    commerce.bootstrap()  # ensure all commerce/v6.1 tables exist
+    commerce.bootstrap()  # ensure all commerce/v6.1/v8 tables exist
+
+    # v8.0: ensure the default tenant exists so single-store deployments work.
+    try:
+        from commerce.tenancy import ensure_default_tenant
+
+        ensure_default_tenant()
+    except Exception as exc:  # noqa: BLE001 - tenancy optional
+        logger.error("COMMERCE | default tenant bootstrap failed: %s", exc)
 
     # v6.1 background job workers — offload order side effects so the webhook
     # returns fast. Idempotent; recovers any pending jobs on start.

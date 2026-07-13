@@ -1,4 +1,14 @@
-# ME-HAAT Fashion AI Bot — v7.0 Enterprise Roadmap & Status
+# ME-HAAT Fashion AI Bot — Enterprise Roadmap & Status
+
+> **v8.0 update:** the five deep-infra items previously marked ⏳ are now delivered —
+> **Redis+Celery** background processing (§12), **Prometheus+Grafana+Sentry** monitoring (§13),
+> the **OpenAPI/Swagger developer portal** with API keys (§15), **multi-tenant** groundwork
+> with tenant resolution + tagging + admin (§16), and **enterprise audit + compliance**
+> (tamper-evident hash chain, GDPR export/erasure, §11/§18). Remaining ⏳ items below (K8s,
+> Grafana dashboards beyond the shipped one, full row-level tenant isolation across every
+> legacy query, AI voice/image/Flow API) are the next phases.
+
+
 
 This maps every item from the v7.0 enterprise request to its current status:
 

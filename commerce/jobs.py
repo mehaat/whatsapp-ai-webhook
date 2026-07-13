@@ -185,6 +185,14 @@ def run_async(kind: str, payload: Dict[str, Any]) -> None:
     """
     try:
         if getattr(config, "jobs_enabled", True):
+            # v8.0: route to Celery/Redis when configured; else in-process queue.
+            try:
+                from commerce.tasks import dispatch
+
+                if dispatch(kind, payload):
+                    return
+            except Exception:  # noqa: BLE001 - fall back to the in-process queue
+                pass
             enqueue(kind, payload)
             return
 

@@ -158,6 +158,7 @@ def handle_webhook() -> Any:
         for entry in payload.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
+                _resolve_tenant(value)
                 _process_status_updates(value)
                 _process_messages(value)
     except Exception as exc:  # noqa: BLE001 - boundary catch-all, never crash the webhook
@@ -165,6 +166,20 @@ def handle_webhook() -> Any:
         return jsonify({"status": "error"}), 200
 
     return jsonify({"status": "received"}), 200
+
+
+def _resolve_tenant(value: Dict[str, Any]) -> None:
+    """Resolve the tenant for this webhook batch from its phone_number_id (v8.0).
+
+    Sets the request-scoped tenant so orders created downstream are tagged. Fully
+    guarded — when multi-tenant is off this resolves to the default tenant.
+    """
+    try:
+        from commerce.tenancy import resolve_from_wa_webhook
+
+        resolve_from_wa_webhook(value)
+    except Exception as exc:  # noqa: BLE001 - tenancy is optional
+        logger.debug("WEBHOOK | tenant resolution skipped: %s", exc)
 
 
 def _process_status_updates(value: Dict[str, Any]) -> None:

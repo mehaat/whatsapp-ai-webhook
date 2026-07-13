@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_VERSION = "7.0"
+APP_VERSION = "8.0"
 
 
 def _split_scopes(raw: str) -> List[str]:
@@ -217,6 +217,40 @@ class Config:
     )
     # Optional Redis URL to back the job queue / rate limits (future-proofing).
     redis_url: str = field(default_factory=lambda: os.environ.get("REDIS_URL", ""))
+
+    # --- v8.0 Enterprise scale ---
+    # Background queue backend: "inprocess" (default threads) or "celery".
+    # Celery requires REDIS_URL (or CELERY_BROKER_URL) to be set.
+    queue_backend: str = field(
+        default_factory=lambda: os.environ.get("QUEUE_BACKEND", "inprocess").strip().lower()
+    )
+    celery_broker_url: str = field(
+        default_factory=lambda: os.environ.get("CELERY_BROKER_URL", "")
+        or os.environ.get("REDIS_URL", "")
+    )
+    celery_result_backend: str = field(
+        default_factory=lambda: os.environ.get("CELERY_RESULT_BACKEND", "")
+        or os.environ.get("REDIS_URL", "")
+    )
+    # Multi-tenant. OFF by default => single implicit "default" tenant, so
+    # existing single-store deployments behave exactly as before.
+    multi_tenant_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("MULTI_TENANT_ENABLED", "false"), False)
+    )
+    default_tenant_slug: str = field(
+        default_factory=lambda: os.environ.get("DEFAULT_TENANT_SLUG", "default")
+    )
+    # Developer portal (API key management + Swagger).
+    developer_portal_enabled: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("DEVELOPER_PORTAL_ENABLED", "true"), True)
+    )
+    # Compliance: data retention (0 = keep forever) + PII export dir.
+    data_retention_days: int = field(
+        default_factory=lambda: int(os.environ.get("DATA_RETENTION_DAYS", "0"))
+    )
+    compliance_export_dir: str = field(
+        default_factory=lambda: os.environ.get("COMPLIANCE_EXPORT_DIR", "exports")
+    )
 
     # --- Business / invoice identity (used on PDF invoices) ---
     business_name: str = field(

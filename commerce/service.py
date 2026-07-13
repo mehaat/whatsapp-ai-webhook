@@ -49,6 +49,16 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if isinstance(dt, datetime) else None
 
 
+def _metric(name: str, amount: float = 1.0) -> None:
+    """Best-effort Prometheus counter increment (never raises)."""
+    try:
+        from utils.observability import incr
+
+        incr(name, amount)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _order_to_dict(order, items=None) -> Dict[str, Any]:
     data = {
         "id": order.id,
@@ -139,10 +149,20 @@ class OrderService:
             tax = (subtotal - discount) * rate
         total = subtotal - discount + shipping + tax
 
+        # v8.0: tag the order with the resolved tenant (default when single-store).
+        tenant_id = None
+        try:
+            from commerce.tenancy import current_tenant_id
+
+            tenant_id = current_tenant_id()
+        except Exception:  # noqa: BLE001
+            tenant_id = None
+
         with session_scope() as session:
             number = next_order_number(session)
             order = Order(
                 order_number=number,
+                tenant_id=tenant_id,
                 wa_number=parsed.wa_number,
                 customer_name=parsed.customer_name,
                 language=parsed.language,
@@ -217,6 +237,7 @@ class OrderService:
         query: Optional[str] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
+        tenant_id: Optional[int] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
@@ -225,20 +246,25 @@ class OrderService:
 
         with session_scope() as session:
             q = session.query(Order)
-            q = self._apply_filters(q, Order, status, payment_status, query, date_from, date_to)
+            q = self._apply_filters(
+                q, Order, status, payment_status, query, date_from, date_to, tenant_id
+            )
             q = q.order_by(Order.created_at.desc(), Order.id.desc()).limit(limit).offset(offset)
             return [_order_to_dict(o) for o in q.all()]
 
     def count_orders(
         self, *, status: Optional[str] = None, payment_status: Optional[str] = None,
         query: Optional[str] = None, date_from: Optional[str] = None, date_to: Optional[str] = None,
+        tenant_id: Optional[int] = None,
     ) -> int:
         from database.db import session_scope
         from database.models import Order
 
         with session_scope() as session:
             q = session.query(Order)
-            q = self._apply_filters(q, Order, status, payment_status, query, date_from, date_to)
+            q = self._apply_filters(
+                q, Order, status, payment_status, query, date_from, date_to, tenant_id
+            )
             return q.count()
 
     def latest_order_for(self, wa_number: str) -> Optional[Dict[str, Any]]:
@@ -409,6 +435,7 @@ class OrderService:
             session.flush()
             self._audit(session, "system", "payment.create", "payment", str(payment.id),
                         f"{provider} {status} {_f(amount)} {currency}")
+            _metric("payments_total")
             return {
                 "id": payment.id, "order_id": order_id, "provider": provider,
                 "payment_url": payment_url, "provider_link_id": provider_link_id,
@@ -445,6 +472,8 @@ class OrderService:
                 order.payment_status = "paid" if status == "paid" else status
                 if status == "paid" and order.status == "received":
                     order.status = "confirmed"
+                if status == "paid":
+                    _metric("revenue_total", _f(payment.amount))
             self._audit(session, "payment_webhook", "payment.update", "payment",
                         str(payment.id), status)
             return _order_to_dict(order) if order is not None else None
@@ -474,6 +503,7 @@ class OrderService:
         from database.db import session_scope
         from database.models import NotificationLog
 
+        _metric("notifications_total")
         try:
             with session_scope() as session:
                 session.add(NotificationLog(
@@ -518,10 +548,18 @@ class OrderService:
     def _audit(session, actor, action, entity=None, entity_id=None, detail=None, ip=None) -> None:
         from database.models import AuditLog
 
-        session.add(AuditLog(
+        row = AuditLog(
             actor=actor or "system", action=action, entity=entity, entity_id=entity_id,
             detail=(detail or "")[:2000], ip=ip,
-        ))
+        )
+        session.add(row)
+        # v8.0 tamper-evident hash chain (best-effort; never breaks the write).
+        try:
+            from commerce.audit_chain import apply_chain
+
+            apply_chain(session, row)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("COMMERCE | audit chain skipped: %s", exc)
 
     @staticmethod
     def _resolve(session, order_id, order_number):
@@ -547,9 +585,11 @@ class OrderService:
             return _order_to_dict(order)
 
     @staticmethod
-    def _apply_filters(q, Order, status, payment_status, query, date_from, date_to):
+    def _apply_filters(q, Order, status, payment_status, query, date_from, date_to, tenant_id=None):
         # Exclude soft-deleted orders from all listings/counts.
         q = q.filter(Order.deleted_at.is_(None))
+        if tenant_id:
+            q = q.filter(Order.tenant_id == tenant_id)
         if status:
             q = q.filter(Order.status == status)
         if payment_status:

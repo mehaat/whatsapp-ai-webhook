@@ -1,6 +1,18 @@
-# ME-HAAT Fashion AI Bot v7.0 Enterprise Edition
+# ME-HAAT Fashion AI Bot v8.0 Enterprise Edition
 
-Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — full **Shopify OAuth**, catalog ordering, automatic Shopify draft orders, payment links, PDF invoices/labels, live order tracking, coupons & gift cards, returns/RMA, shipping, a Customer CRM, support tickets, multi-user roles with 2FA, background jobs, inventory reservation, reporting, a documented REST API, and Docker/CI deployment.
+Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — full **Shopify OAuth**, catalog ordering, Shopify draft orders, payments, PDF invoices/labels, order tracking, coupons & gift cards, returns/RMA, shipping, CRM, support tickets, multi-user roles with 2FA, **Celery/Redis background processing**, **Prometheus/Grafana/Sentry monitoring**, a **developer portal with API keys**, **multi-tenant architecture**, **enterprise compliance** (GDPR export/erasure + tamper-evident audit), and Docker/CI deployment.
+
+## What's New in v8.0
+
+Additive over v7.0 — all prior features preserved. The five enterprise-scale areas:
+
+- **Redis + Celery background processing** — set `QUEUE_BACKEND=celery` + `REDIS_URL` and every background job (notifications, invoices, draft orders, reservations, broadcasts) runs on a Celery worker pool, with a **Celery beat** schedule for abandoned-cart recovery and shipment-tracking refresh. `run_async` transparently routes to Celery when enabled and falls back to the in-process queue otherwise. `docker-compose` ships `redis`, `worker`, and `beat` services.
+- **Prometheus + Grafana + Sentry monitoring** — a Prometheus **`/metrics`** endpoint (requests, latency, 5xx, orders, payments, revenue, notifications, job queue depth), a ready-to-import **Grafana dashboard** with auto-provisioned datasource, a Prometheus scrape config, and optional **Sentry** error monitoring (`SENTRY_DSN`). Compose ships `prometheus` + `grafana`.
+- **OpenAPI/Swagger Developer Portal** — a public **`/developers`** portal, interactive Swagger at **`/api/docs`**, and DB-backed **API keys** (`mh_live_…`, hashed at rest, per-key scopes + rate limits) managed at `/admin/developer`. Keys authenticate the REST API via `X-API-Key`.
+- **Multi-store / multi-tenant architecture** — a `Tenant` model with resolution by WhatsApp `phone_number_id`, Shopify domain, host, or `X-Tenant` header; a request-scoped tenant context; orders tagged with `tenant_id`; and a **Stores** admin console (`/admin/tenants`) with a "view-as" switcher. Off by default (single implicit default tenant) so existing deployments are unaffected.
+- **Enterprise audit logs & compliance** — a **tamper-evident audit hash chain** with an integrity verifier, **GDPR/DPDP data-subject export** and **right-to-erasure**, PII access logging, retention purge, and a **Compliance** admin console (`/admin/compliance`) with an audit-log viewer + export.
+
+## What's New in v7.0
 
 ## What's New in v7.0
 

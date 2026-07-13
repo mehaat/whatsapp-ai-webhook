@@ -1,0 +1,58 @@
+{% extends "admin/base.html" %}
+{% block title %}API Key Created{% endblock %}
+{% block heading %}API Key Created{% endblock %}
+{% block content %}
+
+<div class="card-surface panel" style="max-width:760px">
+  <div class="pill warn" style="display:block;padding:12px 14px;margin-bottom:16px">
+    <i class="bi bi-exclamation-triangle"></i>
+    <strong>Copy this key now.</strong> This is the only time the full key is shown.
+    We store only a hash of it — it can never be recovered. If you lose it, revoke it and issue a new one.
+  </div>
+
+  <h3>{{ name }}</h3>
+  <p class="subtle">Prefix <span class="mono">mh_live_{{ created.prefix }}</span> ·
+     Scopes {% for s in created.scopes %}<span class="pill info">{{ s }}</span> {% endfor %}
+     · Rate limit {{ created.rate_limit_per_min }}/min</p>
+
+  <label class="subtle" for="apikeyval">Your new API key</label>
+  <div style="display:flex;gap:8px;align-items:center;margin:6px 0 4px">
+    <input id="apikeyval" class="inp mono" type="text" readonly
+           value="{{ created.api_key }}"
+           style="flex:1;font-size:0.95rem" onclick="this.select()" />
+    <button class="btn" type="button" id="copyBtn"><i class="bi bi-clipboard"></i> Copy</button>
+  </div>
+  <p class="subtle" id="copyNote">Click the field to select, then copy, or use the Copy button.</p>
+
+  <h4 style="margin-top:22px">Use it</h4>
+  <pre class="mono" style="background:var(--panel,#111);padding:14px;border-radius:8px;overflow-x:auto"><code>curl -H "X-API-Key: {{ created.api_key }}" \
+     https://YOUR-HOST/orders</code></pre>
+
+  <div style="margin-top:18px">
+    <a class="btn primary" href="{{ url_for('admin_developer.keys_list') }}"><i class="bi bi-arrow-left"></i> Back to API keys</a>
+    <a class="btn" href="/developers" target="_blank"><i class="bi bi-journal-code"></i> Developer Portal</a>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  (function () {
+    var btn = document.getElementById('copyBtn');
+    var val = document.getElementById('apikeyval');
+    var note = document.getElementById('copyNote');
+    if (!btn || !val) return;
+    btn.addEventListener('click', function () {
+      val.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(val.value).then(function () {
+          if (note) note.textContent = 'Copied to clipboard.';
+        }).catch(function () {});
+      }
+      if (ok && note) note.textContent = 'Copied to clipboard.';
+    });
+  })();
+</script>
+{% endblock %}

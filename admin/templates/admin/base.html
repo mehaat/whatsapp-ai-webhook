@@ -49,9 +49,12 @@
       {% if users_ui %}
       <a class="nav-link {{ 'active' if nav_active in ['admin_users.users_list','admin_users.user_new','admin_users.user_edit'] }}" href="{{ url_for('admin_users.users_list') }}"><i class="bi bi-shield-lock"></i> Admin Users</a>
       {% endif %}
+      {% if has_view('admin_tenants.tenants_list') and is_admin_role %}<a class="nav-link {{ 'active' if nav_active and nav_active.startswith('admin_tenants.') }}" href="{{ url_for('admin_tenants.tenants_list') }}"><i class="bi bi-shop"></i> Stores</a>{% endif %}
+      {% if has_view('admin_developer.keys_list') and is_admin_role %}<a class="nav-link {{ 'active' if nav_active == 'admin_developer.keys_list' }}" href="{{ url_for('admin_developer.keys_list') }}"><i class="bi bi-key"></i> Developer / API Keys</a>{% endif %}
+      {% if has_view('admin_compliance.compliance_home') and is_admin_role %}<a class="nav-link {{ 'active' if nav_active and nav_active.startswith('admin_compliance.') }}" href="{{ url_for('admin_compliance.compliance_home') }}"><i class="bi bi-file-earmark-lock"></i> Compliance</a>{% endif %}
       {% if has_view('admin_settings.settings_page') and is_admin_role %}<a class="nav-link {{ 'active' if nav_active == 'admin_settings.settings_page' }}" href="{{ url_for('admin_settings.settings_page') }}"><i class="bi bi-gear"></i> Settings</a>{% endif %}
       {% if has_view('admin_security.security_overview') %}<a class="nav-link {{ 'active' if nav_active and nav_active.startswith('admin_security.') }}" href="{{ url_for('admin_security.security_overview') }}"><i class="bi bi-shield-check"></i> Security</a>{% endif %}
-      <a class="nav-link" href="/api/docs" target="_blank"><i class="bi bi-braces"></i> API Docs</a>
+      <a class="nav-link" href="/developers" target="_blank"><i class="bi bi-braces"></i> Developer Portal</a>
     </nav>
     <div style="padding:14px 18px;border-top:1px solid rgba(255,255,255,0.08)">
       <a class="nav-link" href="{{ url_for('admin.logout') }}"><i class="bi bi-box-arrow-right"></i> Logout</a>

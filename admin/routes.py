@@ -439,7 +439,7 @@ def _export_rows(kind: str) -> Tuple[List[Dict[str, Any]], Sequence[str], str]:
             rows = [
                 dict(r)
                 for r in conn.execute(
-                    "SELECT * FROM orders ORDER BY id DESC LIMIT 1000"
+                    "SELECT * FROM dash_orders ORDER BY id DESC LIMIT 1000"
                 ).fetchall()
             ]
     elif kind == "chat":

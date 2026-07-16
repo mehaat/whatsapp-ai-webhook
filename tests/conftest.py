@@ -15,3 +15,8 @@ import os
 
 # Force synchronous job execution + no worker threads during the test run.
 os.environ["JOBS_ENABLED"] = "false"
+
+# v10.1: pin the unified database to a local working-directory file for tests so
+# the canonical resolver never picks up a stale /var/data/mehaat.db (which only
+# exists inside Render-style containers). Deterministic + easy to clean.
+os.environ.setdefault("DATABASE_URL", "sqlite:///mehaat.db")

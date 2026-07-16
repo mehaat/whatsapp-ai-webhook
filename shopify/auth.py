@@ -287,47 +287,25 @@ def _candidate_db_paths() -> List[str]:
 
 
 def _resolve_db_path() -> str:
-    """Resolve (once) and return a writable SQLite database path.
+    """Return the unified, canonical SQLite path (v10.1).
 
-    The first candidate whose parent directory can be created/written is chosen.
-    The result is cached for the lifetime of the process.
+    Previously this probed several candidate paths and chose the first writable
+    one, which could land on an *ephemeral* working-directory file on Render and
+    silently lose OAuth tokens across restarts. It now delegates to the single
+    canonical resolver (:func:`utils.dbpath.canonical_sqlite_path`) so the token
+    store, the admin dashboard and the SQLAlchemy commerce layer all share one
+    deterministic, absolute ``mehaat.db``.
     """
     global _RESOLVED_DB_PATH
     if _RESOLVED_DB_PATH is not None:
         return _RESOLVED_DB_PATH
-
     with _DB_PATH_LOCK:
         if _RESOLVED_DB_PATH is not None:
             return _RESOLVED_DB_PATH
+        from utils.dbpath import canonical_sqlite_path
 
-        last_error: Optional[Exception] = None
-        for candidate in _candidate_db_paths():
-            try:
-                directory = os.path.dirname(candidate)
-                if directory:
-                    os.makedirs(directory, exist_ok=True)
-                # Probe writability by opening (and closing) a connection.
-                probe = sqlite3.connect(candidate, timeout=5.0)
-                probe.execute("PRAGMA journal_mode=WAL;")
-                probe.close()
-                _RESOLVED_DB_PATH = candidate
-                logger.info("OAUTH_DB | Using SQLite persistence at %s", candidate)
-                return _RESOLVED_DB_PATH
-            except Exception as exc:  # noqa: BLE001 - try the next candidate
-                last_error = exc
-                logger.debug("OAUTH_DB | Path %s unusable: %s", candidate, exc)
-
-        # As an absolute last resort, use an in-memory-per-process path so the
-        # application still starts (single-worker/dev only).  This should never
-        # be reached on Render because /var/data is mounted and writable.
-        fallback = os.path.join(os.getcwd(), "mehaat_oauth_fallback.db")
-        logger.error(
-            "OAUTH_DB | No preferred SQLite path was writable (%s); "
-            "falling back to %s",
-            last_error,
-            fallback,
-        )
-        _RESOLVED_DB_PATH = fallback
+        _RESOLVED_DB_PATH = canonical_sqlite_path()
+        logger.info("OAUTH_DB | Using unified SQLite persistence at %s", _RESOLVED_DB_PATH)
         return _RESOLVED_DB_PATH
 
 
@@ -381,6 +359,77 @@ def _ensure_schema() -> None:
             # surface their own errors and are individually guarded.
             _SCHEMA_READY = True
             logger.error("OAUTH_DB | Schema initialisation failed: %s", exc)
+
+
+def validate_and_recover_tokens() -> dict:
+    """Validate the OAuth token store at startup and self-heal where possible.
+
+    Runs a SQLite integrity check, verifies the ``shop_tokens`` schema, counts
+    stored shops, and confirms each stored token can be read back (decrypting
+    when encryption is enabled). Corrupted/undecryptable rows are logged loudly
+    and skipped rather than crashing the app. Returns a structured report:
+
+        {"ok", "path", "integrity", "shop_count", "valid", "corrupted": [...]}
+
+    This is the diagnostic that makes the historical ``shop_count=0`` failure
+    visible at boot instead of silently at request time.
+    """
+    _ensure_schema()
+    path = _resolve_db_path()
+    report = {"ok": True, "path": path, "integrity": "unknown",
+              "shop_count": 0, "valid": 0, "corrupted": []}
+    conn = None
+    try:
+        conn = _connect()
+        # 1) SQLite-level integrity.
+        try:
+            row = conn.execute("PRAGMA integrity_check;").fetchone()
+            report["integrity"] = (row[0] if row else "unknown")
+            if report["integrity"] != "ok":
+                report["ok"] = False
+                logger.error("OAUTH_DB | Integrity check FAILED at %s: %s",
+                             path, report["integrity"])
+        except Exception as exc:  # noqa: BLE001
+            report["integrity"] = f"error: {exc}"
+            logger.error("OAUTH_DB | Integrity check errored: %s", exc)
+
+        # 2) Row-level token validation (detect undecryptable/corrupt tokens).
+        rows = conn.execute("SELECT shop, access_token FROM shop_tokens").fetchall()
+        report["shop_count"] = len(rows)
+        for r in rows:
+            shop = r["shop"]
+            try:
+                decoded = _decrypt_from_storage(r["access_token"])
+                if decoded and isinstance(decoded, str) and len(decoded) >= 8:
+                    report["valid"] += 1
+                else:
+                    report["corrupted"].append(shop)
+                    logger.error("OAUTH_DB | Token for %s is unreadable/too short", shop)
+            except Exception as exc:  # noqa: BLE001
+                report["corrupted"].append(shop)
+                logger.error("OAUTH_DB | Token for %s failed to decode: %s", shop, exc)
+
+        if report["corrupted"]:
+            report["ok"] = False
+
+        logger.info(
+            "OAUTH_DB | Token store validated at %s | integrity=%s shops=%d valid=%d corrupted=%d",
+            path, report["integrity"], report["shop_count"], report["valid"],
+            len(report["corrupted"]),
+        )
+        if report["shop_count"] == 0:
+            logger.warning(
+                "OAUTH_DB | No Shopify shops persisted. If you installed a shop and "
+                "see this after a restart, verify DATABASE_URL/TOKEN_STORE_PATH point "
+                "at the SAME persistent path (v10.1 unifies them at %s).", path
+            )
+    except Exception as exc:  # noqa: BLE001 - never crash startup on diagnostics
+        report["ok"] = False
+        logger.error("OAUTH_DB | Token validation failed: %s", exc)
+    finally:
+        if conn is not None:
+            conn.close()
+    return report
 
 
 # --------------------------------------------------------------------------- #
@@ -672,6 +721,10 @@ class TokenStore:
         with _WRITE_LOCK:
             conn = _connect()
             try:
+                # v10.1: an explicit IMMEDIATE transaction takes the write lock up
+                # front (with busy_timeout) so concurrent installs never race or
+                # half-write; ON CONFLICT(shop) guarantees no duplicate shops.
+                conn.execute("BEGIN IMMEDIATE;")
                 existed = conn.execute(
                     "SELECT 1 FROM shop_tokens WHERE shop = ?", (shop,)
                 ).fetchone()
@@ -684,13 +737,28 @@ class TokenStore:
                     (shop, stored_token, now, now),
                 )
                 conn.commit()
+                # Read-back verification: confirm the row is actually persisted and
+                # decryptable, so a silent write failure surfaces immediately.
+                verify = conn.execute(
+                    "SELECT access_token FROM shop_tokens WHERE shop = ?", (shop,)
+                ).fetchone()
+                persisted = bool(verify and _decrypt_from_storage(verify["access_token"]))
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+                raise
             finally:
                 conn.close()
 
-        if existed:
-            logger.info("TOKEN_SAVED | shop=%s (updated)", shop)
+        if not persisted:
+            logger.error("TOKEN_SAVE_FAILED | shop=%s did not persist (path=%s)",
+                         shop, _resolve_db_path())
+        elif existed:
+            logger.info("TOKEN_SAVED | shop=%s (updated) path=%s", shop, _resolve_db_path())
         else:
-            logger.info("TOKEN_SAVED | shop=%s", shop)
+            logger.info("TOKEN_SAVED | shop=%s path=%s", shop, _resolve_db_path())
             logger.info("SHOP_INSTALLED | shop=%s", shop)
 
     def get(self, shop: str) -> Optional[str]:

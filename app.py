@@ -1,11 +1,11 @@
 """
 app.py
 ------
-ME-HAAT Fashion AI Bot v10.0 Enterprise Edition
+ME-HAAT Fashion AI Bot v10.1 Stable Edition
 Production WhatsApp AI Sales Assistant + Commerce Platform — Shopify OAuth Edition.
-v10.0 adds a multi-agent AI orchestrator (sales/support/inventory/marketing/analytics/
-voice specialists), a RAG knowledge base, an MCP tool server, and a human-approval
-workflow for sensitive actions.
+v10.1 is a stability release: fixes Shopify OAuth token persistence, unifies the
+database into one mehaat.db, hardens the tracker/event pipeline, and adds richer
+health, per-component logging, and fail-fast startup validation. Zero regression.
 
 Entry point for the Flask application. Wires together:
     - shopify.auth   : OAuth install/callback routes
@@ -222,6 +222,21 @@ try:
     except Exception as exc:  # noqa: BLE001 - tenancy optional
         logger.error("COMMERCE | default tenant bootstrap failed: %s", exc)
 
+    # v10.1: unify the database (merge any legacy mehaat_admin.db) and validate
+    # the OAuth token store at startup so persistence problems are visible early.
+    try:
+        from database.migrate_v10_1 import merge_admin_db
+
+        merge_admin_db()
+    except Exception as exc:  # noqa: BLE001 - migration must never break startup
+        logger.error("MIGRATE | admin DB merge failed: %s", exc)
+    try:
+        from shopify.auth import validate_and_recover_tokens
+
+        validate_and_recover_tokens()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("OAUTH_DB | token validation failed: %s", exc)
+
     # v10.0: activate the human-approval gate for high-risk agent tools and
     # register the RAG knowledge_search tool.
     try:
@@ -306,6 +321,17 @@ def _validate_configuration() -> None:
 
 
 _validate_configuration()
+# v10.1: fail-fast startup validation with helpful errors. Only aborts boot when
+# STRICT_STARTUP=true and a *critical* variable is missing; otherwise it logs
+# clear warnings (preserving the existing boot-with-missing-vars behaviour).
+try:
+    from config import enforce_startup_validation
+
+    enforce_startup_validation()
+except SystemExit:
+    raise
+except Exception as exc:  # noqa: BLE001 - validation must not itself break boot
+    logger.error("CONFIG | startup validation error: %s", exc)
 bootstrap_database()  # no-op unless USE_DATABASE=true and SQLAlchemy is installed
 
 

@@ -69,9 +69,8 @@ services:
       # Stable session-signing secret (recommended). Generate a random value.
       - key: ADMIN_SECRET_KEY
         sync: false
-      # Dashboard SQLite lives on the mounted persistent disk by default.
-      - key: ADMIN_DB_PATH
-        value: /var/data/mehaat_admin.db
+      # v10.1: ADMIN_DB_PATH intentionally unset so the dashboard shares the ONE
+      # unified /var/data/mehaat.db (the migration merges any legacy admin DB).
       - key: ADMIN_SESSION_TIMEOUT_MIN
         value: "60"
       # --- v6.0 Enterprise Commerce (optional; safe defaults) ---
@@ -204,3 +203,12 @@ services:
         value: "true"
       - key: APPROVAL_REQUIRED
         value: "true"
+      # --- v10.1 Stable ---
+      # Absolute sqlite path already set via DATABASE_URL above; UNIFIED_DB_PATH
+      # can override the canonical path explicitly if needed.
+      - key: STRICT_STARTUP
+        value: "false"
+      - key: DEV_MODE
+        value: "false"
+      - key: LOG_DIR
+        value: /var/data/logs

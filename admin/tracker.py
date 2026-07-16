@@ -33,14 +33,33 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _dev_mode() -> bool:
+    """True in development so tracking failures show full tracebacks."""
+    try:
+        from config import config
+
+        return bool(getattr(config, "dev_mode", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _safe(fn):
-    """Decorator: swallow and log any exception so tracking never breaks the bot."""
+    """Decorator: guard tracking so it never breaks the bot — but NEVER silently.
+
+    v10.1: tracking failures are always surfaced. In development they log a full
+    traceback (``logger.exception``); in production they log at ERROR level with
+    the failing function + reason. Database failures are no longer hidden at
+    DEBUG level (the historical cause of the dashboard silently not updating).
+    """
 
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 - tracking is best-effort only
-            logger.debug("ADMIN | tracker.%s skipped: %s", fn.__name__, exc)
+        except Exception as exc:  # noqa: BLE001 - tracking must not break the reply path
+            if _dev_mode():
+                logger.exception("ADMIN | tracker.%s FAILED", fn.__name__)
+            else:
+                logger.error("ADMIN | tracker.%s failed (db issue?): %s", fn.__name__, exc)
             return None
 
     wrapper.__name__ = fn.__name__
@@ -60,13 +79,13 @@ def _touch_conversation(
 ) -> None:
     """Upsert the per-customer conversation summary row used by the inbox."""
     row = conn.execute(
-        "SELECT id, message_count, unread_count FROM conversations WHERE wa_number = ?",
+        "SELECT id, message_count, unread_count FROM dash_conversations WHERE wa_number = ?",
         (wa_number,),
     ).fetchone()
     snippet = (last_message or "")[:280]
     if row is None:
         conn.execute(
-            "INSERT INTO conversations (wa_number, profile_name, last_message, "
+            "INSERT INTO dash_conversations (wa_number, profile_name, last_message, "
             "last_direction, message_count, unread_count, status, started_at, "
             "last_message_at) VALUES (?, ?, ?, ?, 1, ?, 'open', ?, ?)",
             (wa_number, profile_name, snippet, direction, 1 if inbound else 0, now, now),
@@ -77,7 +96,7 @@ def _touch_conversation(
         # Bot replied; the thread is "handled" from the operator's perspective.
         unread = 0 if direction == "out" else unread
     conn.execute(
-        "UPDATE conversations SET profile_name = COALESCE(?, profile_name), "
+        "UPDATE dash_conversations SET profile_name = COALESCE(?, profile_name), "
         "last_message = ?, last_direction = ?, message_count = message_count + 1, "
         "unread_count = ?, last_message_at = ? WHERE id = ?",
         (profile_name or None, snippet, direction, unread, now, row["id"]),
@@ -97,17 +116,17 @@ def upsert_customer(
     now = _now_iso()
     with get_conn(write=True) as conn:
         row = conn.execute(
-            "SELECT id FROM customers WHERE wa_number = ?", (wa_number,)
+            "SELECT id FROM dash_customers WHERE wa_number = ?", (wa_number,)
         ).fetchone()
         if row is None:
             conn.execute(
-                "INSERT INTO customers (wa_number, profile_name, language, email, "
+                "INSERT INTO dash_customers (wa_number, profile_name, language, email, "
                 "first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (wa_number, profile_name, language, email, now, now),
             )
         else:
             conn.execute(
-                "UPDATE customers SET profile_name = COALESCE(?, profile_name), "
+                "UPDATE dash_customers SET profile_name = COALESCE(?, profile_name), "
                 "language = COALESCE(?, language), email = COALESCE(?, email), "
                 "last_seen_at = ? WHERE id = ?",
                 (profile_name or None, language or None, email or None, now, row["id"]),
@@ -250,7 +269,7 @@ def record_order_lookup(order: dict) -> None:
     now = _now_iso()
     with get_conn(write=True) as conn:
         conn.execute(
-            "INSERT INTO orders (order_name, wa_number, customer_name, email, phone, "
+            "INSERT INTO dash_orders (order_name, wa_number, customer_name, email, phone, "
             "financial_status, fulfillment_status, total_price, currency, tracking, "
             "looked_up_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -274,7 +293,7 @@ def mark_read(wa_number: str) -> None:
     """Clear the unread counter for a conversation (called when opened)."""
     with get_conn(write=True) as conn:
         conn.execute(
-            "UPDATE conversations SET unread_count = 0 WHERE wa_number = ?",
+            "UPDATE dash_conversations SET unread_count = 0 WHERE wa_number = ?",
             (wa_number,),
         )
 
@@ -289,7 +308,10 @@ def record_login(username: str) -> None:
                 (now, username),
             )
     except Exception as exc:  # noqa: BLE001
-        logger.debug("ADMIN | record_login skipped: %s", exc)
+        if _dev_mode():
+            logger.exception("ADMIN | record_login FAILED")
+        else:
+            logger.error("ADMIN | record_login failed: %s", exc)
 
 
 __all__: List[str] = [

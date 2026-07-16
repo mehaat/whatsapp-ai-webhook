@@ -21,6 +21,7 @@ Every pre-existing function keeps its exact signature and behaviour.
 
 from __future__ import annotations
 
+import difflib
 import re
 import time
 from dataclasses import dataclass, field
@@ -400,18 +401,59 @@ _COLORS = [
     "maroon", "purple", "orange", "gold", "silver", "beige", "cream",
     "navy", "teal", "peach", "mustard", "grey", "gray",
 ]
+# Hindi / Hinglish / typo aliases mapped to the english colour ``_COLORS`` and
+# the downstream Shopify filters already understand.
+_COLOR_ALIASES: Dict[str, str] = {
+    "lal": "red", "laal": "red",
+    "neela": "blue", "nila": "blue", "neel": "blue",
+    "hara": "green", "hari": "green",
+    "kala": "black", "kaala": "black",
+    "safed": "white",
+    "peela": "yellow", "pila": "yellow", "peeli": "yellow",
+    "gulabi": "pink",
+    "sunehra": "gold", "sunahra": "gold", "golden": "gold",
+}
 _FABRICS = [
     "cotton", "silk", "banarasi", "pashmina", "georgette", "chiffon",
     "linen", "organza", "chanderi", "tussar", "kanjivaram", "kanchipuram",
+    "satin", "velvet", "net", "crepe",
 ]
+# Hindi / Hinglish / typo aliases mapped to the canonical fabric token.
+_FABRIC_ALIASES: Dict[str, str] = {
+    "resham": "silk", "reshmi": "silk", "silck": "silk", "silc": "silk",
+    "suti": "cotton", "sooti": "cotton", "cottn": "cotton", "coton": "cotton",
+    "georgett": "georgette", "chifon": "chiffon", "organ za": "organza",
+}
 _OCCASIONS = [
     "wedding", "festive", "festival", "party", "casual", "office", "daily",
     "engagement", "reception", "bridal", "partywear",
 ]
+# Hindi / Hinglish / typo aliases mapped to the canonical occasion token.
+_OCCASION_ALIASES: Dict[str, str] = {
+    "shaadi": "wedding", "shadi": "wedding", "shaddi": "wedding",
+    "vivah": "wedding", "byah": "wedding", "weding": "wedding",
+    "tyohaar": "festive", "tyohar": "festive", "tyohaar wear": "festive",
+    "formal": "office",
+    "sagai": "engagement",
+}
 _PRODUCT_NOUNS = [
-    "saree", "sarees", "sari", "saris", "lehenga", "lehngas", "lehenga choli",
-    "kurti", "kurtis", "suit", "suits", "salwar", "anarkali", "gown", "gowns",
-    "dupatta", "ethnic wear", "ethnic", "dress", "dresses", "blouse",
+    "saree", "sarees", "sari", "saris", "saaree", "lehenga", "lehngas",
+    "lehenga choli", "kurta", "kurti", "kurtis", "suit", "suits", "salwar",
+    "anarkali", "gown", "gowns", "dupatta", "ethnic wear", "ethnic", "dress",
+    "dresses", "blouse",
+]
+# Category vocabulary -> Shopify ``product_type`` label. Ordered: the first
+# rule whose surface forms appear wins. "Sarees"/"Ethnic Wear" labels are
+# preserved from v3.0/v4.0; the rest are additive.
+_CATEGORY_RULES: List[tuple] = [
+    (["saree", "sarees", "sari", "saris", "saaree", "saari", "sarree"], "Sarees"),
+    (["lehenga", "lehengas", "lehngas", "lehnga", "lehanga", "lehenga choli"],
+     "Lehengas"),
+    (["kurta", "kurti", "kurtas", "kurtis"], "Kurtis"),
+    (["suit", "suits", "salwar", "anarkali"], "Suits"),
+    (["gown", "gowns"], "Gowns"),
+    (["dupatta", "dupattas"], "Dupattas"),
+    (["blouse", "blouses"], "Blouses"),
 ]
 _SHOW_VERBS = [
     "show", "dikhao", "dikha", "dekhna", "dekhao", "dikhaye", "batao",
@@ -420,20 +462,126 @@ _SHOW_VERBS = [
 ]
 
 
+def _word_in(word: str, text: str) -> bool:
+    """Return True if ``word`` occurs as a whole word inside ``text``."""
+    return re.search(r"\b" + re.escape(word) + r"\b", text) is not None
+
+
+def _fuzzy_lookup(
+    tokens: List[str],
+    surface_to_canon: Dict[str, str],
+    *,
+    cutoff: float = 0.84,
+    min_len: int = 5,
+) -> Optional[str]:
+    """Best-effort typo match of tokens against a surface->canonical map.
+
+    Uses stdlib ``difflib`` (no heavy dependency). Short tokens are skipped so
+    ambiguous words like "red"/"more" never fuzzily resolve to vocabulary.
+    """
+    surfaces = list(surface_to_canon.keys())
+    for token in tokens:
+        if len(token) < min_len:
+            continue
+        if token in surface_to_canon:
+            return surface_to_canon[token]
+        match = difflib.get_close_matches(token, surfaces, n=1, cutoff=cutoff)
+        if match:
+            return surface_to_canon[match[0]]
+    return None
+
+
+def _extract_price(text: str, filters: Dict[str, Optional[str]]) -> None:
+    """Populate ``min_budget`` / ``max_budget`` in-place from ``text``.
+
+    Handles English, Hindi and Hinglish price phrasings plus bare numbers that
+    sit next to a fabric / product word.
+    """
+    money = r"(?:rs\.?|inr|₹)?"
+    num = r"(\d{3,6})"
+
+    # 1) Explicit range: "between 2000 and 5000".
+    range_match = re.search(
+        rf"between\s*{money}\s*{num}\s*(?:and|to|-|&|se)\s*{money}\s*{num}", text
+    )
+    # 2) Generic range: "2000 to 5000", "2000-5000", "2000 se 5000".
+    if range_match is None:
+        range_match = re.search(rf"{money}\s*{num}\s*(?:-|to|se)\s*{money}\s*{num}", text)
+    if range_match:
+        low, high = range_match.group(1), range_match.group(2)
+        if int(low) > int(high):
+            low, high = high, low
+        filters["min_budget"] = low
+        filters["max_budget"] = high
+        return
+
+    # MAX budget -- english keywords, then Hindi suffixes, then "wali/ki".
+    max_match = re.search(
+        rf"(?:under|below|less than|lesser than|upto|up to|within|max|maximum|budget)"
+        rf"\s*{money}\s*{num}",
+        text,
+    )
+    if max_match is None:
+        max_match = re.search(
+            rf"{num}\s*{money}\s*"
+            r"(?:tak|ke andar|ke ander|se kam|se niche|se neeche|ke neeche|"
+            r"ke niche|ke under)\b",
+            text,
+        )
+    if max_match is None:
+        max_match = re.search(
+            rf"{num}\s*{money}\s*(?:wali|waali|wala|wale|ki|ka|ke)\b", text
+        )
+    if max_match:
+        filters["max_budget"] = max_match.group(1)
+
+    # MIN budget -- english keywords, then Hindi "se upar".
+    min_match = re.search(
+        rf"(?:above|over|more than|greater than|starting from|starting|minimum|min)"
+        rf"\s*{money}\s*{num}",
+        text,
+    )
+    if min_match is None:
+        min_match = re.search(
+            rf"{num}\s*{money}\s*se\s*(?:upar|oopar|uper|upper|zyada|jyada|adhik)\b",
+            text,
+        )
+    if min_match:
+        filters["min_budget"] = min_match.group(1)
+
+    # Bare number sitting next to a fabric / product word => treat as a max cap
+    # ("799 saree", "2000 silk"). Only when no budget was detected above.
+    if filters["max_budget"] is None and filters["min_budget"] is None:
+        bare = re.search(r"\b(\d{3,6})\b", text)
+        if bare:
+            has_context = (
+                any(_word_in(f, text) for f in _FABRICS)
+                or any(_word_in(a, text) for a in _FABRIC_ALIASES)
+                or any(_word_in(n, text) for n in _PRODUCT_NOUNS)
+            )
+            if has_context:
+                filters["max_budget"] = bare.group(1)
+
+
 def extract_search_filters(text: str) -> Dict[str, Optional[str]]:
     """Extract simple product-search filters from free-form customer text.
 
     This is a lightweight heuristic extractor (not NLP-grade) used to decide
-    which Shopify filters to apply before calling ``search_products``.
+    which Shopify filters to apply before calling ``search_products``. It is
+    pure and guarded -- it never raises, even on empty / non-string input.
+
+    Recognises English, Hindi and Hinglish phrasings plus common typos, e.g.
+    "799 wali saree", "lal cotton saree", "shaadi ki saree", "cottn sari",
+    "green cotton under 999", "2000 se upar".
 
     Args:
         text: Sanitized customer message.
 
     Returns:
         Dict with optional keys: max_budget, min_budget, color, fabric,
-        occasion, category.
+        occasion, category. (Keys and their semantics are stable across
+        versions; new versions only fill them more often.)
     """
-    normalized = text.lower()
     filters: Dict[str, Optional[str]] = {
         "max_budget": None,
         "min_budget": None,
@@ -442,50 +590,71 @@ def extract_search_filters(text: str) -> Dict[str, Optional[str]]:
         "occasion": None,
         "category": None,
     }
+    if not text or not isinstance(text, str):
+        return filters
 
-    # Range must be checked before under/above so "2000 to 5000" wins cleanly.
-    range_match = re.search(
-        r"(?:rs\.?|inr|₹)?\s*(\d{3,6})\s*(?:-|to|se)\s*(?:rs\.?|inr|₹)?\s*(\d{3,6})", normalized
-    )
-    if range_match:
-        filters["min_budget"] = range_match.group(1)
-        filters["max_budget"] = range_match.group(2)
-    else:
-        max_match = re.search(
-            r"(?:under|below|less than|upto|up to|within|budget\s*)\s*"
-            r"(?:rs\.?|inr|₹)?\s*(\d{3,6})",
-            normalized,
-        )
-        if max_match:
-            filters["max_budget"] = max_match.group(1)
+    normalized = text.lower()
+    tokens = re.findall(r"[a-z]+", normalized)
 
-        min_match = re.search(
-            r"(?:above|over|more than|starting|minimum)\s*(?:rs\.?|inr|₹)?\s*(\d{3,6})",
-            normalized,
-        )
-        if min_match:
-            filters["min_budget"] = min_match.group(1)
+    # ------------------------------------------------------------------ price
+    _extract_price(normalized, filters)
 
-    for c in _COLORS:
-        if re.search(r"\b" + re.escape(c) + r"\b", normalized):
-            filters["color"] = "grey" if c == "gray" else c
+    # ------------------------------------------------------------------ colour
+    for alias, canon in _COLOR_ALIASES.items():
+        if _word_in(alias, normalized):
+            filters["color"] = canon
             break
+    if filters["color"] is None:
+        for c in _COLORS:
+            if _word_in(c, normalized):
+                filters["color"] = "grey" if c == "gray" else c
+                break
 
-    for f in _FABRICS:
-        if f in normalized:
-            filters["fabric"] = f
+    # ------------------------------------------------------------------ fabric
+    for alias, canon in _FABRIC_ALIASES.items():
+        if _word_in(alias, normalized):
+            filters["fabric"] = canon
             break
+    if filters["fabric"] is None:
+        for f in _FABRICS:
+            if _word_in(f, normalized):
+                filters["fabric"] = f
+                break
+    if filters["fabric"] is None:
+        fabric_surfaces = {**{f: f for f in _FABRICS}, **_FABRIC_ALIASES}
+        filters["fabric"] = _fuzzy_lookup(tokens, fabric_surfaces)
 
-    for o in _OCCASIONS:
-        if o in normalized:
-            filters["occasion"] = "party" if o == "partywear" else o
+    # ---------------------------------------------------------------- occasion
+    for alias, canon in _OCCASION_ALIASES.items():
+        if _word_in(alias, normalized):
+            filters["occasion"] = canon
             break
+    if filters["occasion"] is None:
+        for o in _OCCASIONS:
+            if _word_in(o, normalized):
+                filters["occasion"] = "party" if o == "partywear" else o
+                break
+    if filters["occasion"] is None:
+        occasion_surfaces = {
+            **{o: ("party" if o == "partywear" else o) for o in _OCCASIONS},
+            **_OCCASION_ALIASES,
+        }
+        filters["occasion"] = _fuzzy_lookup(tokens, occasion_surfaces)
 
-    # Category maps to a Shopify product_type. We keep the same values v3.0 used.
-    if re.search(r"\bsaree|sari\b", normalized) or "saree" in normalized or "sari" in normalized:
-        filters["category"] = "Sarees"
-    elif "ethnic" in normalized:
+    # ---------------------------------------------------------------- category
+    # Category maps to a Shopify product_type. "Sarees"/"Ethnic Wear" values
+    # are preserved from v3.0/v4.0; the remaining rules are additive.
+    for surfaces, label in _CATEGORY_RULES:
+        if any(_word_in(s, normalized) for s in surfaces):
+            filters["category"] = label
+            break
+    if filters["category"] is None and "ethnic" in normalized:
         filters["category"] = "Ethnic Wear"
+    if filters["category"] is None:
+        category_surfaces = {
+            s: label for surfaces, label in _CATEGORY_RULES for s in surfaces
+        }
+        filters["category"] = _fuzzy_lookup(tokens, category_surfaces)
 
     return filters
 

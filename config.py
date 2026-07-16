@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_VERSION = "10.0"
+APP_VERSION = "10.1"
 
 
 def _split_scopes(raw: str) -> List[str]:
@@ -295,6 +295,14 @@ class Config:
         default_factory=lambda: os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash")
     )
 
+    # v10.1: development mode surfaces full tracebacks for tracking/DB failures
+    # (logger.exception) instead of terse production logging. Enable with
+    # DEV_MODE=true or FLASK_ENV=development.
+    dev_mode: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("DEV_MODE", ""), False)
+        or os.environ.get("FLASK_ENV", "").strip().lower() == "development"
+    )
+
     # --- v10.0 AI agents / orchestration ---
     # Master switch for the multi-agent orchestrator (API + admin console).
     agents_enabled: bool = field(
@@ -416,6 +424,12 @@ class Config:
     log_level: str = field(
         default_factory=lambda: os.environ.get("LOG_LEVEL", "INFO").strip().upper()
     )
+    # v10.1: when True, a "critical" startup validation issue aborts boot
+    # (SystemExit). Default False preserves the existing boot-with-missing-vars
+    # behaviour, so tests and forgiving deployments are unaffected.
+    strict_startup: bool = field(
+        default_factory=lambda: _as_bool(os.environ.get("STRICT_STARTUP", "false"), False)
+    )
 
     # --- Server ---
     port: int = field(default_factory=lambda: int(os.environ.get("PORT", "5000")))
@@ -444,5 +458,130 @@ class Config:
         }
         return [name for name, value in required.items() if not value]
 
+    def validate_startup(self) -> "List[dict]":
+        """Return a list of startup configuration issues (v10.1, additive).
+
+        Each issue is a dict ``{"var", "severity", "message"}`` where severity is
+        ``"critical"`` (breaks a core function) or ``"warning"`` (optional but
+        recommended). This method NEVER raises and performs no I/O, so it is safe
+        to call anywhere; :func:`enforce_startup_validation` decides what to do
+        with the result. Nothing is called at import time.
+        """
+        # (var, present_value, severity, remediation message)
+        admin_secret = os.environ.get("ADMIN_SECRET_KEY", "").strip()
+        admin_user = os.environ.get("ADMIN_USERNAME", "").strip()
+        admin_pass = os.environ.get("ADMIN_PASSWORD", "").strip()
+        specs = [
+            (
+                "SHOPIFY_APP_URL", self.shopify_app_url, "critical",
+                "Public app URL is required to build the Shopify OAuth redirect "
+                "(install/callback). Set SHOPIFY_APP_URL to your https base URL.",
+            ),
+            (
+                "VERIFY_TOKEN", self.verify_token, "critical",
+                "WhatsApp webhook verification will fail without VERIFY_TOKEN. "
+                "Set it to the token configured in the Meta webhook settings.",
+            ),
+            (
+                "PHONE_NUMBER_ID", self.phone_number_id, "critical",
+                "Outbound WhatsApp sends require PHONE_NUMBER_ID from the Meta "
+                "WhatsApp Cloud API dashboard.",
+            ),
+            (
+                "WHATSAPP_TOKEN", self.whatsapp_token, "critical",
+                "A WHATSAPP_TOKEN (permanent/system-user token) is required to "
+                "call the WhatsApp Cloud API.",
+            ),
+            (
+                "GEMINI_API_KEY", self.gemini_api_key, "critical",
+                "GEMINI_API_KEY is required for AI replies; without it the bot "
+                "cannot generate responses.",
+            ),
+            (
+                "DATABASE_URL", self.database_url, "warning",
+                "DATABASE_URL is unset; falling back to a local sqlite file. Set "
+                "it explicitly (and to a persistent path) for durable storage.",
+            ),
+            (
+                "TOKEN_ENCRYPTION_KEY", self.token_encryption_key, "warning",
+                "TOKEN_ENCRYPTION_KEY is not set; Shopify access tokens are stored "
+                "unencrypted at rest. Provide a Fernet key to encrypt them.",
+            ),
+            (
+                "ADMIN_SECRET_KEY", admin_secret, "critical",
+                "ADMIN_SECRET_KEY signs admin dashboard sessions. Set a strong "
+                "random value to secure the admin console.",
+            ),
+            (
+                "ADMIN_USERNAME", admin_user, "warning",
+                "ADMIN_USERNAME is unset; the admin dashboard will use its built-in "
+                "default. Set an explicit username.",
+            ),
+            (
+                "ADMIN_PASSWORD", admin_pass, "critical",
+                "ADMIN_PASSWORD is unset; the admin dashboard would be unprotected "
+                "or use an insecure default. Set a strong password.",
+            ),
+        ]
+        issues: List[dict] = []
+        for var, value, severity, message in specs:
+            if not value:
+                issues.append({"var": var, "severity": severity, "message": message})
+        return issues
+
 
 config = Config()
+
+
+def validate_startup() -> "List[dict]":
+    """Module-level convenience wrapper over :meth:`Config.validate_startup`."""
+    return config.validate_startup()
+
+
+def enforce_startup_validation() -> "List[dict]":
+    """Log startup issues and, in strict mode, fail fast on critical problems.
+
+    Behaviour (v10.1, additive — NOT called at import time):
+        * Every issue is logged with a helpful remediation message (critical =>
+          error, warning => warning).
+        * If ``config.strict_startup`` is True AND at least one "critical" issue
+          exists, raises :class:`SystemExit` with a clear combined message.
+        * Otherwise it only warns, preserving the current boot-with-missing-vars
+          behaviour (and keeping existing tests passing).
+
+    Returns the list of issues (also useful for callers/tests).
+    """
+    try:
+        from utils.logging import logger as _logger
+    except Exception:  # noqa: BLE001 - logging must never block startup checks
+        import logging as _logging
+
+        _logger = _logging.getLogger("mehaat_bot")
+
+    issues = config.validate_startup()
+    criticals = [i for i in issues if i.get("severity") == "critical"]
+
+    for issue in issues:
+        line = "STARTUP_VALIDATION | %s | %s: %s"
+        if issue.get("severity") == "critical":
+            _logger.error(line, issue["severity"].upper(), issue["var"], issue["message"])
+        else:
+            _logger.warning(line, issue["severity"].upper(), issue["var"], issue["message"])
+
+    if not issues:
+        _logger.info("STARTUP_VALIDATION | all checked configuration present")
+
+    if config.strict_startup and criticals:
+        names = ", ".join(i["var"] for i in criticals)
+        raise SystemExit(
+            "Startup aborted (STRICT_STARTUP=true): missing/invalid critical "
+            f"configuration: {names}. Fix these environment variables and restart. "
+            "See logs above for per-variable remediation."
+        )
+
+    if criticals:
+        _logger.warning(
+            "STARTUP_VALIDATION | %d critical issue(s) present but STRICT_STARTUP is "
+            "off; continuing (set STRICT_STARTUP=true to fail fast).", len(criticals)
+        )
+    return issues

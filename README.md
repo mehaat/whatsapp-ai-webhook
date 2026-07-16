@@ -1,4 +1,14 @@
-# ME-HAAT Fashion AI Bot v10.0 Enterprise Edition
+# ME-HAAT Fashion AI Bot v10.1 Stable Edition
+
+A stability & hardening release over v10.0 — **no features removed, full backward compatibility, zero regression** (~361 tests passing). See `CHANGELOG.md`, `UPGRADE_v10_TO_v10.1.md`, `DATABASE_MIGRATION.md`, and `TEST_CHECKLIST.md`.
+
+- **Fixed: Shopify OAuth persistence** — the `installed_shops=1 → shop_count=0` bug is gone. All layers now use ONE deterministic, absolute `mehaat.db` (`utils/dbpath.py`); token saves use an `IMMEDIATE` transaction with read-back verification; startup runs `validate_and_recover_tokens()` (integrity check + token validation + clear logging).
+- **Database unification** — the OAuth token store, admin dashboard, and SQLAlchemy commerce data live in one `mehaat.db`. The admin dashboard's three colliding tables became `dash_customers`/`dash_conversations`/`dash_orders`, and `database/migrate_v10_1.py` auto-merges any legacy `mehaat_admin.db` on boot (idempotent, no data loss).
+- **Tracker + event pipeline** — the tracker no longer hides DB failures (dev: full tracebacks; prod: ERROR logs), so the dashboard's **Products Sent / AI Replies / counters now populate** (they auto-refresh every 7s). Full pipeline: inbound → search → products-sent → Gemini reco → record-ai → outbound.
+- **Smarter search** — `extract_search_filters` now parses "799 wali saree", "lal cotton saree", "banarasi silk under 3000", "green cotton under 999", ranges, occasions, and Hindi/Hinglish/typos.
+- **Richer `/health`** (database path/size/integrity, OAuth token count + last install, component-configured flags), **per-component structured logs** (`shopify.log`, `oauth.log`, `ai.log`, …), and **fail-fast startup validation** (`STRICT_STARTUP`).
+
+## ME-HAAT Fashion AI Bot v10.0 Enterprise Edition
 
 Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — Shopify OAuth, ordering, payments, invoices, tracking, coupons/returns/shipping, CRM, RBAC/2FA, Celery/Redis, monitoring, multi-tenant, compliance, Kubernetes/Helm, Advanced AI Commerce, and a **multi-agent AI orchestrator** with a RAG knowledge base, an MCP tool server, and a human-approval workflow.
 

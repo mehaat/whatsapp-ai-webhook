@@ -11,6 +11,7 @@ uptime monitor or an orchestrator probe.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict
 
 from config import config
@@ -61,15 +62,170 @@ def _database_status() -> str:
         return "unavailable"
 
 
-def build_health_report() -> Dict[str, Any]:
-    """Full health report (backward-compatible superset of the v3.0 payload)."""
+# --------------------------------------------------------------------------- #
+# v10.1: richer, still-cheap probes. Every probe is fully guarded: a failure
+# yields a safe {"ok": False, "error": ...} sub-dict and NEVER raises, so the
+# /health endpoint can never be blocked or crashed by a probe. No probe makes an
+# external network call (no Gemini / Shopify / WhatsApp).
+# --------------------------------------------------------------------------- #
+
+def _database_probe() -> Dict[str, Any]:
+    """Cheap local database inspection (path/size/integrity/reachability)."""
+    try:
+        from utils.dbpath import (
+            canonical_sqlite_path,
+            database_is_sqlite,
+            database_size_bytes,
+        )
+
+        path = canonical_sqlite_path()
+        size = database_size_bytes()
+        info: Dict[str, Any] = {
+            "path": path,
+            "size_bytes": size,
+            "size_mb": round(size / (1024 * 1024), 3),
+            "integrity": "unknown",
+            "reachable": False,
+        }
+        if database_is_sqlite():
+            import sqlite3
+
+            try:
+                conn = sqlite3.connect(path, timeout=2.0)
+                try:
+                    row = conn.execute("PRAGMA quick_check;").fetchone()
+                    info["integrity"] = str(row[0]) if row else "unknown"
+                    info["reachable"] = True
+                finally:
+                    conn.close()
+            except Exception as exc:  # noqa: BLE001
+                info["reachable"] = False
+                info["error"] = str(exc)
+        else:
+            # Non-sqlite backend (e.g. Postgres): don't open a network conn here.
+            info["integrity"] = "unknown"
+            info["reachable"] = os.path.exists(path)
+        return info
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+
+def _oauth_probe() -> Dict[str, Any]:
+    """OAuth token store summary (shop count + most-recent install/update)."""
+    info: Dict[str, Any] = {"token_count": 0, "shops": [], "last_oauth": None}
+    try:
+        from shopify.auth import token_store
+
+        shops = list(token_store.list_shops())
+        info["token_count"] = len(shops)
+        info["shops"] = shops
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc), "token_count": 0, "shops": [],
+                "last_oauth": None}
+
+    # Best-effort, cheap: most recent installed_at/updated_at if the table exists.
+    try:
+        from utils.dbpath import canonical_sqlite_path
+        import sqlite3
+
+        conn = sqlite3.connect(canonical_sqlite_path(), timeout=2.0)
+        try:
+            row = conn.execute(
+                "SELECT MAX(installed_at) AS i, MAX(updated_at) AS u FROM shop_tokens"
+            ).fetchone()
+            candidates = [v for v in (row[0], row[1]) if row and v is not None]
+            info["last_oauth"] = max(candidates) if candidates else None
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - table may not exist yet; non-fatal
+        info["last_oauth"] = None
+    return info
+
+
+def _dashboard_probe() -> Dict[str, Any]:
+    """Confirm the admin dashboard DB is openable and has a dash table."""
+    try:
+        from utils.dbpath import canonical_sqlite_path
+        import sqlite3
+
+        conn = sqlite3.connect(canonical_sqlite_path(), timeout=2.0)
+        try:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name LIKE 'dash%' LIMIT 1"
+            ).fetchone()
+            return {"reachable": row is not None}
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc), "reachable": False}
+
+
+def _conversation_memory_probe() -> Dict[str, Any]:
+    """Count active in-memory conversation sessions (None if unobtainable)."""
+    try:
+        from memory.store import conversation_memory
+
+        with conversation_memory._lock:  # noqa: SLF001 - cheap, read-only count
+            count = len(conversation_memory._last_seen)  # noqa: SLF001
+        return {"active_sessions": count}
+    except Exception as exc:  # noqa: BLE001
+        return {"active_sessions": None, "error": str(exc)}
+
+
+def _observability_extras() -> Dict[str, Any]:
+    """Assemble the additive v10.1 richer view (all cheap, all guarded)."""
+    db = _database_probe()
+    oauth = _oauth_probe()
+    token_count = oauth.get("token_count", 0)
     return {
+        "database": db,
+        "oauth": oauth,
+        "shopify": {
+            "configured": bool(
+                config.shopify_api_key
+                and config.shopify_api_secret
+                and config.shopify_app_url
+            ),
+            "installed_shops": token_count,
+        },
+        "whatsapp": {
+            "configured": bool(
+                config.verify_token
+                and config.whatsapp_token
+                and config.phone_number_id
+            )
+        },
+        "gemini": {
+            "configured": bool(config.gemini_api_key),
+            "model": config.gemini_model,
+        },
+        "dashboard": _dashboard_probe(),
+        "conversation_memory": _conversation_memory_probe(),
+    }
+
+
+def build_health_report() -> Dict[str, Any]:
+    """Full health report (backward-compatible superset of the v3.0 payload).
+
+    v10.1 keeps every existing top-level key (status/service/version/
+    shops_connected/components) and ADDS a richer, still-cheap view (database,
+    oauth, shopify, whatsapp, gemini, dashboard, conversation_memory). All added
+    probes are guarded and never raise or block the endpoint.
+    """
+    report: Dict[str, Any] = {
         "status": "ok",
         "service": SERVICE_NAME,
         "version": config.version,
         "shops_connected": _shops_connected(),
         "components": _component_status(),
     }
+    try:
+        report.update(_observability_extras())
+    except Exception as exc:  # noqa: BLE001 - additive view must never break /health
+        logger.debug("HEALTH | observability extras unavailable: %s", exc)
+        report["observability_error"] = str(exc)
+    return report
 
 
 def liveness() -> Dict[str, Any]:

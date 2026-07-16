@@ -47,20 +47,22 @@ def _int_env(name: str, default: int) -> int:
 
 
 def _default_db_path() -> str:
-    """Choose a sensible default SQLite path.
+    """Choose the dashboard's SQLite path.
 
-    Prefers the directory of the existing ``TOKEN_STORE_PATH`` so that on Render
-    the dashboard database lives on the same persistent disk as the Shopify
-    token store (``/var/data``). Falls back to the working directory.
+    v10.1: unless ``ADMIN_DB_PATH`` is *explicitly* set, the dashboard now shares
+    the single canonical ``mehaat.db`` with the token store and commerce data
+    (one unified database). Setting ``ADMIN_DB_PATH`` still forces a separate
+    file for backward compatibility.
     """
     explicit = os.environ.get("ADMIN_DB_PATH", "").strip()
     if explicit:
         return explicit
-    token_store = os.environ.get("TOKEN_STORE_PATH", "").strip()
-    if token_store:
-        directory = os.path.dirname(token_store) or "."
-        return os.path.join(directory, "mehaat_admin.db")
-    return "mehaat_admin.db"
+    try:
+        from utils.dbpath import canonical_sqlite_path
+
+        return canonical_sqlite_path()
+    except Exception:  # noqa: BLE001 - defensive fallback
+        return "mehaat.db"
 
 
 def _derive_secret_key() -> str:

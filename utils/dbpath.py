@@ -105,9 +105,20 @@ def canonical_sqlite_path() -> str:
         return _CANONICAL
 
 
+from pathlib import Path
+
 def canonical_sqlite_url() -> str:
-    """Return an absolute ``sqlite:////...`` URL for the canonical path."""
-    return "sqlite:////" + canonical_sqlite_path().lstrip("/")
+    """
+    Return a SQLAlchemy-compatible SQLite URL.
+    """
+    db = Path(canonical_sqlite_path()).resolve()
+
+    if os.name == "nt":
+        # Windows
+        return "sqlite:///" + db.as_posix()
+
+    # Linux / macOS
+    return "sqlite:////" + db.as_posix().lstrip("/")
 
 
 def database_is_sqlite() -> bool:

@@ -1,4 +1,4 @@
-<<"""
+"""
 whatsapp/webhook.py
 --------------------
 WhatsApp Cloud API webhook for ME-HAAT Fashion AI Bot v5.1 Production Edition.

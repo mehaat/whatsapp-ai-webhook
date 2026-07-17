@@ -1,4 +1,4 @@
-"""
+<<"""
 whatsapp/webhook.py
 --------------------
 WhatsApp Cloud API webhook for ME-HAAT Fashion AI Bot v5.1 Production Edition.
@@ -35,8 +35,15 @@ whatsapp_webhook_bp = Blueprint("whatsapp_webhook", __name__)
 
 # Type: (wa_number: str, text: str, profile_name: str) -> None
 MessageHandler = Callable[[str, str, str], None]
+# Type: (message: dict, profile_name: str) -> None  (WhatsApp catalog orders)
+OrderHandler = Callable[[Dict[str, Any], str], None]
 
 _message_handler: Optional[MessageHandler] = None
+_order_handler: Optional[OrderHandler] = None
+# Type: (message: dict, profile_name: str) -> None  (inbound image → visual search)
+_image_handler: Optional[OrderHandler] = None
+# Type: (message: dict, profile_name: str) -> None  (inbound audio → voice agent)
+_audio_handler: Optional[OrderHandler] = None
 _rate_limiter = RateLimiter(max_requests=20, window_seconds=60)
 
 # --------------------------------------------------------------------------
@@ -63,6 +70,42 @@ def init_webhook(handler: MessageHandler) -> None:
     """
     global _message_handler
     _message_handler = handler
+
+
+
+
+def init_order_webhook(handler: OrderHandler) -> None:
+    """Register the callback invoked for each inbound WhatsApp catalog order.
+
+    Args:
+        handler: Callable taking (message: dict, profile_name: str). Optional;
+            when unset, order messages fall back to the normal text pipeline.
+    """
+    global _order_handler
+    _order_handler = handler
+
+
+def init_image_webhook(handler: OrderHandler) -> None:
+    """Register the callback invoked for each inbound WhatsApp image (v9.0).
+
+    Args:
+        handler: Callable taking (message: dict, profile_name: str). Optional;
+            when unset, image messages fall back to the unsupported-type reply.
+    """
+    global _image_handler
+    _image_handler = handler
+
+
+def init_audio_webhook(handler: OrderHandler) -> None:
+    """Register the callback invoked for each inbound WhatsApp audio note (v10.0).
+
+    Args:
+        handler: Callable taking (message: dict, profile_name: str). Optional;
+            when unset, audio messages fall back to the unsupported-type reply.
+    """
+    global _audio_handler
+    _audio_handler = handler
+
 
 
 def _already_processed(message_id: str) -> bool:
@@ -144,6 +187,7 @@ def handle_webhook() -> Any:
         for entry in payload.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
+                _resolve_tenant(value)
                 _process_status_updates(value)
                 _process_messages(value)
     except Exception as exc:  # noqa: BLE001 - boundary catch-all, never crash the webhook
@@ -151,6 +195,20 @@ def handle_webhook() -> Any:
         return jsonify({"status": "error"}), 200
 
     return jsonify({"status": "received"}), 200
+
+
+def _resolve_tenant(value: Dict[str, Any]) -> None:
+    """Resolve the tenant for this webhook batch from its phone_number_id (v8.0).
+
+    Sets the request-scoped tenant so orders created downstream are tagged. Fully
+    guarded — when multi-tenant is off this resolves to the default tenant.
+    """
+    try:
+        from commerce.tenancy import resolve_from_wa_webhook
+
+        resolve_from_wa_webhook(value)
+    except Exception as exc:  # noqa: BLE001 - tenancy is optional
+        logger.debug("WEBHOOK | tenant resolution skipped: %s", exc)
 
 
 def _process_status_updates(value: Dict[str, Any]) -> None:
@@ -195,12 +253,44 @@ def _process_messages(value: Dict[str, Any]) -> None:
         # Best-effort read receipt; independent of downstream handling.
         _mark_read_best_effort(message_id)
 
+
+
+        message_type = message.get("type")
+
+        # WhatsApp Commerce catalog order (v6.0): route to the order handler
+        # before the text pipeline, since order messages carry no text body.
+        if message_type == "order" and _order_handler is not None:
+            logger.info("ORDER | Incoming catalog order from %s", wa_number)
+            try:
+                _order_handler(message, profile_name)
+            except Exception as exc:  # noqa: BLE001 - never crash the webhook
+                logger.error("ORDER | Order handler failed for %s: %s", wa_number, exc)
+            continue
+
+        # v9.0: inbound image → visual product search.
+        if message_type == "image" and _image_handler is not None:
+            logger.info("IMAGE | Incoming image from %s", wa_number)
+            try:
+                _image_handler(message, profile_name)
+            except Exception as exc:  # noqa: BLE001 - never crash the webhook
+                logger.error("IMAGE | Image handler failed for %s: %s", wa_number, exc)
+            continue
+
+        # v10.0: inbound audio/voice note → voice agent.
+        if message_type == "audio" and _audio_handler is not None:
+            logger.info("AUDIO | Incoming voice note from %s", wa_number)
+            try:
+                _audio_handler(message, profile_name)
+            except Exception as exc:  # noqa: BLE001 - never crash the webhook
+                logger.error("AUDIO | Audio handler failed for %s: %s", wa_number, exc)
+            continue
+
+
         if not _rate_limiter.is_allowed(wa_number):
             logger.warning("RATE_LIMIT | Blocked message from %s", wa_number)
             _dispatch(wa_number, "__RATE_LIMITED__", profile_name)
             continue
 
-        message_type = message.get("type")
         text = _extract_text_from_message(message, message_type)
 
         if text is None:

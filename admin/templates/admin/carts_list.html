@@ -1,0 +1,49 @@
+{% extends "admin/base.html" %}
+{% block title %}Carts{% endblock %}
+{% block heading %}Carts{% endblock %}
+{% block content %}
+
+<form class="toolbar" method="GET" action="{{ url_for('admin_catalog.carts_list') }}">
+  <select class="field" name="status" style="width:auto" {{ 'disabled' if abandoned }}>
+    <option value="">All statuses</option>
+    {% for s in ['active','converted','abandoned'] %}
+    <option value="{{ s }}" {{ 'selected' if status==s }}>{{ s|title }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
+  <a class="btn {{ 'primary' if abandoned else 'ghost' }}" href="{{ url_for('admin_catalog.carts_list', abandoned=1) }}">
+    <i class="bi bi-hourglass-split"></i> Abandoned only
+  </a>
+  <a class="btn ghost" href="{{ url_for('admin_catalog.carts_list') }}"><i class="bi bi-x-circle"></i> Reset</a>
+</form>
+
+<div class="card-surface panel">
+  <h3>{{ 'Abandoned Carts' if abandoned else 'Carts' }} <span class="subtle">· {{ carts|length }}</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Customer</th><th>Status</th><th class="tabular">Items</th>
+        <th class="tabular">Subtotal</th><th>Recovery Sent</th><th>Updated</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in carts %}
+      <tr>
+        <td class="mono"><a href="{{ url_for('admin.customer_detail', wa_number=c.wa_number) }}">{{ c.wa_number }}</a></td>
+        <td>
+          <span class="pill {{ 'good' if c.status=='converted' else 'warn' if c.status=='active' else 'bad' }}">{{ c.status|title }}</span>
+        </td>
+        <td class="tabular">{{ c['items']|length }}</td>
+        <td class="tabular">{{ c.currency }} {{ '%.2f'|format(c.subtotal) }}</td>
+        <td class="subtle">{{ (c.recovery_sent_at or '—')[:16].replace('T',' ') if c.recovery_sent_at else '—' }}</td>
+        <td class="subtle">{{ (c.updated_at or '')[:16].replace('T',' ') }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6"><div class="empty"><i class="bi bi-cart-x"></i>No carts match.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

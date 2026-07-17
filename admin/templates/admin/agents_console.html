@@ -1,0 +1,140 @@
+{% extends "admin/base.html" %}
+{% block title %}AI Agents{% endblock %}
+{% block heading %}AI Agents Console{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-diagram-3 me-2"></i><strong>Specialist Agents</strong>
+      </div>
+      <div class="card-body p-0">
+        <ul class="list-group list-group-flush">
+          {% for a in agents %}
+          <li class="list-group-item">
+            <div class="d-flex justify-content-between">
+              <strong class="text-capitalize">{{ a.name }}</strong>
+              <span class="badge bg-secondary">{{ a.tools|length }} tools</span>
+            </div>
+            <div class="text-muted small mb-1">{{ a.description }}</div>
+            <div>
+              {% for t in a.tools %}
+              <span class="badge bg-light text-dark border">{{ t }}</span>
+              {% endfor %}
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card shadow-sm">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-chat-dots me-2"></i><strong>Chat with the Orchestrator</strong>
+      </div>
+      <div class="card-body">
+        <div id="chatLog" class="mb-3" style="max-height:340px;overflow-y:auto;"></div>
+        <form id="chatForm" class="d-flex gap-2">
+          <input type="text" id="waNumber" class="form-control" style="max-width:150px"
+                 placeholder="wa_number (optional)" autocomplete="off" />
+          <input type="text" id="chatInput" class="form-control"
+                 placeholder="Ask an agent… e.g. show me red sarees" autocomplete="off" />
+          <button class="btn btn-primary" type="submit">Send</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-3">
+  <div class="card-header d-flex align-items-center">
+    <i class="bi bi-clock-history me-2"></i><strong>Recent Agent Runs</strong>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead>
+          <tr>
+            <th>When</th><th>Agent</th><th>Channel</th><th>Message</th>
+            <th>Reply</th><th>Tools</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in runs %}
+          <tr>
+            <td class="text-nowrap small">{{ r.created_at }}</td>
+            <td><span class="badge bg-info text-dark text-capitalize">{{ r.agent }}</span></td>
+            <td class="small">{{ r.channel }}</td>
+            <td class="small">{{ (r.user_message or '')[:80] }}</td>
+            <td class="small">{{ (r.reply or '')[:80] }}</td>
+            <td class="small">{{ r.tools_used|join(', ') }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-3">No agent runs yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var csrf = "{{ csrf_token }}";
+  var log = document.getElementById("chatLog");
+  var form = document.getElementById("chatForm");
+  var input = document.getElementById("chatInput");
+  var waInput = document.getElementById("waNumber");
+
+  function bubble(text, who, agent) {
+    var wrap = document.createElement("div");
+    wrap.className = "mb-2 " + (who === "you" ? "text-end" : "text-start");
+    var b = document.createElement("span");
+    b.className = "d-inline-block px-3 py-2 rounded " +
+      (who === "you" ? "bg-primary text-white" : "bg-light border");
+    b.style.maxWidth = "85%";
+    if (agent) {
+      var tag = document.createElement("div");
+      tag.className = "small text-muted text-capitalize mb-1";
+      tag.textContent = agent + " agent";
+      b.appendChild(tag);
+    }
+    b.appendChild(document.createTextNode(text));
+    wrap.appendChild(b);
+    log.appendChild(wrap);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var msg = (input.value || "").trim();
+    if (!msg) return;
+    bubble(msg, "you");
+    input.value = "";
+    fetch("{{ url_for('admin_agents.chat') }}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+      body: JSON.stringify({
+        message: msg,
+        wa_number: (waInput.value || "").trim(),
+        csrf_token: csrf
+      })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.text) {
+          bubble(data.text, "agent", data.agent);
+        } else {
+          bubble((data && data.error) || "No reply.", "agent");
+        }
+      })
+      .catch(function () { bubble("Network error — please try again.", "agent"); });
+  });
+})();
+</script>
+{% endblock %}

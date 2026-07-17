@@ -1,0 +1,110 @@
+{% extends "admin/base.html" %}
+{% block title %}Insights{% endblock %}
+{% block heading %}AI Insights{% endblock %}
+{% block content %}
+
+{% if not enabled %}
+<div class="pill warn" style="padding:10px 16px;margin-bottom:16px">
+  <i class="bi bi-exclamation-triangle"></i>
+  Recommendations are disabled (<code>RECOMMENDATIONS_ENABLED=false</code>). Results below may be empty.
+</div>
+{% endif %}
+
+{% if error %}
+<div class="pill danger" style="padding:10px 16px;margin-bottom:16px">
+  <i class="bi bi-x-octagon"></i> {{ error }}
+</div>
+{% endif %}
+
+<form class="toolbar" method="GET" action="{{ url_for('admin_insights.insights_home') }}"
+      style="gap:8px;flex-wrap:wrap;margin-bottom:16px">
+  <label class="subtle">Window (days)
+    <input class="field" type="number" name="days" min="1" value="{{ days }}" style="width:110px" />
+  </label>
+  <label class="subtle">Limit
+    <input class="field" type="number" name="limit" min="1" value="{{ limit }}" style="width:90px" />
+  </label>
+  {% if retailer_id %}<input type="hidden" name="retailer_id" value="{{ retailer_id }}" />{% endif %}
+  <button class="btn primary" type="submit"><i class="bi bi-funnel"></i> Apply</button>
+</form>
+
+<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px">
+
+  <!-- Trending -->
+  <div class="card-surface panel">
+    <h3><i class="bi bi-graph-up-arrow"></i> Trending products</h3>
+    <p class="subtle">Top sellers by quantity over the last {{ days }} days.</p>
+    {% if trending %}
+    <table class="table" style="width:100%">
+      <thead><tr><th>#</th><th>Product</th><th>Retailer ID</th><th style="text-align:right">Qty</th><th style="text-align:right">Price</th></tr></thead>
+      <tbody>
+      {% for r in trending %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ r.product_name }}</td>
+          <td><code>{{ r.product_retailer_id }}</code></td>
+          <td style="text-align:right">{{ r.score|int }}</td>
+          <td style="text-align:right">{% if r.price is defined %}{{ '%.2f'|format(r.price) }}{% else %}—{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="subtle">No sales activity in this window yet.</p>
+    {% endif %}
+  </div>
+
+  <!-- Top movers -->
+  <div class="card-surface panel">
+    <h3><i class="bi bi-fire"></i> Top movers</h3>
+    <p class="subtle">This window's five hottest products.</p>
+    {% if top_movers %}
+    <ol style="padding-left:20px;line-height:1.9">
+      {% for r in top_movers %}
+        <li><strong>{{ r.product_name }}</strong>
+          <span class="subtle">(<code>{{ r.product_retailer_id }}</code>) · {{ r.score|int }} sold</span>
+        </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="subtle">Nothing to show yet.</p>
+    {% endif %}
+  </div>
+
+  <!-- Frequently bought together explorer -->
+  <div class="card-surface panel" style="grid-column:1/-1">
+    <h3><i class="bi bi-diagram-3"></i> Frequently bought together</h3>
+    <p class="subtle">Enter a product's retailer ID to see its cross-sell candidates.</p>
+    <form class="toolbar" method="GET" action="{{ url_for('admin_insights.insights_home') }}"
+          style="gap:8px;flex-wrap:wrap;margin:8px 0 16px">
+      <input type="hidden" name="days" value="{{ days }}" />
+      <input type="hidden" name="limit" value="{{ limit }}" />
+      <input class="field" type="text" name="retailer_id" value="{{ retailer_id }}"
+             placeholder="e.g. SKU-KURTI-001" style="min-width:260px" />
+      <button class="btn primary" type="submit"><i class="bi bi-search"></i> Explore</button>
+    </form>
+
+    {% if retailer_id %}
+      {% if fbt %}
+      <table class="table" style="width:100%">
+        <thead><tr><th>#</th><th>Bought with</th><th>Retailer ID</th><th style="text-align:right">Co-occurrences</th><th style="text-align:right">Price</th></tr></thead>
+        <tbody>
+        {% for r in fbt %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ r.product_name }}</td>
+            <td><code>{{ r.product_retailer_id }}</code></td>
+            <td style="text-align:right">{{ r.score|int }}</td>
+            <td style="text-align:right">{% if r.price is defined %}{{ '%.2f'|format(r.price) }}{% else %}—{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="subtle">No co-purchase data found for <code>{{ retailer_id }}</code>.</p>
+      {% endif %}
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,70 @@
+{% extends "admin/base.html" %}
+{% block title %}Payments{% endblock %}
+{% block heading %}Payments Dashboard{% endblock %}
+{% block content %}
+{% set cur = data.currency or 'INR' %}
+
+<div class="stat-grid">
+  <div class="stat"><div class="icon bg-aqua"><i class="bi bi-cash-stack"></i></div><div class="value">{{ cur }} {{ '%.0f'|format(data.total_collected) }}</div><div class="label">Collected</div></div>
+  <div class="stat"><div class="icon bg-amber"><i class="bi bi-hourglass-split"></i></div><div class="value">{{ cur }} {{ '%.0f'|format(data.total_pending) }}</div><div class="label">Pending</div></div>
+  <div class="stat"><div class="icon bg-blue"><i class="bi bi-check2-circle"></i></div><div class="value">{{ data.paid_count }}</div><div class="label">Paid Payments</div></div>
+  <div class="stat"><div class="icon bg-violet"><i class="bi bi-receipt"></i></div><div class="value">{{ data.count }}</div><div class="label">Total Records</div></div>
+</div>
+
+<div class="grid-2 mt">
+  <div class="card-surface panel">
+    <h3>By Provider</h3>
+    <table class="tbl">
+      <thead><tr><th>Provider</th><th class="tabular">Count</th><th class="tabular">Collected</th><th class="tabular">Pending</th></tr></thead>
+      <tbody>
+        {% for p in data.by_provider %}
+        <tr>
+          <td>{{ p.provider }}</td>
+          <td class="tabular">{{ p.count }}</td>
+          <td class="tabular">{{ '%.2f'|format(p.collected) }}</td>
+          <td class="tabular">{{ '%.2f'|format(p.pending) }}</td>
+        </tr>
+        {% else %}<tr><td colspan="4"><div class="empty"><i class="bi bi-credit-card"></i>No payments yet.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-surface panel">
+    <h3>Summary</h3>
+    <table class="tbl">
+      <tbody>
+        <tr><td class="subtle">Total collected</td><td class="tabular">{{ cur }} {{ '%.2f'|format(data.total_collected) }}</td></tr>
+        <tr><td class="subtle">Total pending</td><td class="tabular">{{ cur }} {{ '%.2f'|format(data.total_pending) }}</td></tr>
+        <tr><td class="subtle">Paid payments</td><td class="tabular">{{ data.paid_count }}</td></tr>
+        <tr><td class="subtle">Pending payments</td><td class="tabular">{{ data.pending_count }}</td></tr>
+        <tr><td class="subtle">Records shown</td><td class="tabular">{{ data.count }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card-surface panel mt">
+  <h3>Recent Payments <span class="subtle">· {{ data.count }} shown</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr><th>ID</th><th>Order</th><th>Provider</th><th>Provider Ref</th><th class="tabular">Amount</th><th>Status</th><th>Created</th></tr>
+    </thead>
+    <tbody>
+      {% for p in data.payments %}
+      <tr>
+        <td class="mono">#{{ p.id }}</td>
+        <td class="mono">{{ p.order_number or ('#' ~ p.order_id) }}</td>
+        <td>{{ p.provider }}</td>
+        <td class="mono subtle">{{ (p.provider_payment_id or '—')[:24] }}</td>
+        <td class="tabular">{{ p.currency }} {{ '%.2f'|format(p.amount) }}</td>
+        <td><span class="pill {{ 'good' if p.status=='paid' else 'bad' if p.status in ['failed','expired'] else 'warn' }}">{{ p.status|title }}</span></td>
+        <td class="subtle">{{ (p.created_at or '')[:16].replace('T',' ') }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7"><div class="empty"><i class="bi bi-credit-card"></i>No payments recorded yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

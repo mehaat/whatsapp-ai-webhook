@@ -1,0 +1,122 @@
+{% extends "admin/base.html" %}
+{% block title %}AI Commerce{% endblock %}
+{% block heading %}Advanced AI Commerce{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:18px">
+  <div class="card-surface panel">
+    <div class="subtle">Visual index size</div>
+    <div style="font-size:28px;font-weight:700">{{ index_size }}</div>
+    <div class="subtle">embedder: {{ embedder }}</div>
+  </div>
+  <div class="card-surface panel">
+    <div class="subtle">Visual search</div>
+    <div style="font-size:20px;font-weight:700">{{ 'Enabled' if visual_enabled else 'Disabled' }}</div>
+  </div>
+  <div class="card-surface panel">
+    <div class="subtle">AI Stylist</div>
+    <div style="font-size:20px;font-weight:700">{{ 'Enabled' if stylist_enabled else 'Disabled' }}</div>
+  </div>
+</div>
+
+<div class="card-surface panel" style="margin-bottom:18px">
+  <h3><i class="bi bi-camera"></i> Try visual search</h3>
+  <p class="subtle" style="margin-top:-4px">Upload a product photo to find the most visually similar indexed products.</p>
+  <form method="POST" action="{{ url_for('admin_ai_commerce.visual_search_run') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input class="field" type="file" name="image" accept="image/*" required />
+    <button class="btn" type="submit" style="margin-top:10px"><i class="bi bi-search"></i> Search</button>
+  </form>
+
+  {% if results is not none %}
+  <div style="margin-top:16px">
+    <div class="subtle">Results{% if query_desc %} for "{{ query_desc }}"{% endif %}</div>
+    {% if results %}
+    <table class="table" style="width:100%;margin-top:8px">
+      <thead><tr><th>#</th><th>Retailer ID</th><th>Name</th><th>Price</th><th>Score</th></tr></thead>
+      <tbody>
+        {% for r in results %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ r.product_retailer_id }}</td>
+          <td>{% if r.url %}<a href="{{ r.url }}" target="_blank">{{ r.product_name or '—' }}</a>{% else %}{{ r.product_name or '—' }}{% endif %}</td>
+          <td>{{ r.price if r.price is not none else '—' }}</td>
+          <td>{{ '%.3f'|format(r.score) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="subtle" style="margin-top:8px">No similar products found.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="card-surface panel" style="margin-bottom:18px">
+  <h3><i class="bi bi-plus-square"></i> Index a product</h3>
+  <p class="subtle" style="margin-top:-4px">Add a product image + metadata to the visual index.</p>
+  <form method="POST" action="{{ url_for('admin_ai_commerce.index_product_run') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
+      <input class="field" type="text" name="product_retailer_id" placeholder="Retailer ID *" required />
+      <input class="field" type="text" name="product_name" placeholder="Product name" />
+      <input class="field" type="text" name="product_type" placeholder="Type (e.g. Sarees)" />
+      <input class="field" type="text" name="color" placeholder="Colour" />
+      <input class="field" type="number" step="any" name="price" placeholder="Price" />
+      <input class="field" type="url" name="url" placeholder="Product URL" />
+      <input class="field" type="url" name="image_url" placeholder="Image URL" />
+      <input class="field" type="file" name="image" accept="image/*" />
+    </div>
+    <button class="btn" type="submit" style="margin-top:10px"><i class="bi bi-save"></i> Index product</button>
+  </form>
+</div>
+
+<div class="card-surface panel">
+  <h3><i class="bi bi-stars"></i> Stylist explorer</h3>
+  <p class="subtle" style="margin-top:-4px">Complete the look around an anchor garment, or explore an occasion guide.</p>
+  <form method="GET" action="{{ url_for('admin_ai_commerce.ai_home') }}">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">
+      <input class="field" type="text" name="product_type" placeholder="Anchor (e.g. saree)" value="{{ request.args.get('product_type','') }}" />
+      <input class="field" type="text" name="color" placeholder="Colour (e.g. red)" value="{{ request.args.get('color','') }}" />
+      <input class="field" type="text" name="occasion" placeholder="Occasion (e.g. wedding)" value="{{ request.args.get('occasion','') }}" />
+    </div>
+    <button class="btn" type="submit" style="margin-top:10px"><i class="bi bi-magic"></i> Explore</button>
+  </form>
+
+  {% if look %}
+  <div style="margin-top:16px">
+    <h4 style="margin-bottom:6px">Complete the look — anchor: {{ look.anchor }}</h4>
+    <ul>
+      {% for s in look.suggestions %}
+      <li><strong>{{ s.category }}</strong> — {{ s.reason }}</li>
+      {% endfor %}
+    </ul>
+    <div class="subtle">Colours: {{ look.colors|join(', ') }}</div>
+    <p style="margin-top:6px">{{ look.note }}</p>
+  </div>
+  {% endif %}
+
+  {% if occasion %}
+  <div style="margin-top:16px">
+    <h4 style="margin-bottom:6px">Occasion guide — {{ occasion.occasion }}</h4>
+    <div class="subtle">Categories: {{ occasion.categories|join(', ') }}</div>
+    <div class="subtle">Fabrics: {{ occasion.fabrics|join(', ') }}</div>
+    <div class="subtle">Colours: {{ occasion.colors|join(', ') }}</div>
+    <p style="margin-top:6px">{{ occasion.note }}</p>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

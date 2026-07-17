@@ -1,8 +1,12 @@
 """
 app.py
 ------
-ME-HAAT Fashion AI Bot v5.1 Production Edition
-Production WhatsApp AI Sales Assistant — Shopify OAuth Edition.
+ME-HAAT Fashion AI Bot v10.1 Stable Edition
+Production WhatsApp AI Sales Assistant + Commerce Platform — Shopify OAuth Edition.
+
+v10.1 is a stability release: fixes Shopify OAuth token persistence, unifies the
+database into one mehaat.db, hardens the tracker/event pipeline, and adds richer
+health, per-component logging, and fail-fast startup validation. Zero regression.
 
 Entry point for the Flask application. Wires together:
     - shopify.auth   : OAuth install/callback routes
@@ -48,7 +52,13 @@ from utils.logging import logger
 from utils.ratelimit import RateLimiter
 from utils.security import contains_injection_attempt, sanitize_input
 from whatsapp.sender import send_products, send_text_message
-from whatsapp.webhook import init_webhook, whatsapp_webhook_bp
+from whatsapp.webhook import (
+    init_audio_webhook,
+    init_image_webhook,
+    init_order_webhook,
+    init_webhook,
+    whatsapp_webhook_bp,
+)
 
 # Admin dashboard (additive module). The import is guarded so that, exactly like
 # the optional database layer, a problem inside the dashboard can never prevent
@@ -104,9 +114,191 @@ app.register_blueprint(whatsapp_webhook_bp)
 # Security headers + per-request trace-id context (v4.0, additive).
 register_middleware(app)
 
+# v7.0 observability: optional Sentry error monitoring (no-op unless SENTRY_DSN).
+try:
+    from flask import g as _g
+    from utils.observability import incr
+
+    # v9.0: richer Sentry (Flask + Celery integrations, tracing, release).
+    try:
+        from utils.sentry_ext import init_sentry
+
+        init_sentry(app)
+    except Exception:  # noqa: BLE001 - fall back to the basic hook
+        from utils.observability import init_sentry as _basic_sentry
+
+        _basic_sentry()
+
+    @app.before_request
+    def _obs_start():  # noqa: ANN001
+        try:
+            _g._obs_t0 = time.perf_counter()
+        except Exception:  # noqa: BLE001
+            pass
+
+    @app.after_request
+    def _count_request(response):  # noqa: ANN001
+        try:
+            incr("http_requests_total")
+            if response.status_code >= 500:
+                incr("http_5xx_total")
+            t0 = getattr(_g, "_obs_t0", None)
+            if t0 is not None:
+                incr("http_request_duration_seconds_sum", time.perf_counter() - t0)
+                incr("http_request_duration_seconds_count", 1.0)
+        except Exception:  # noqa: BLE001
+            pass
+        return response
+except Exception as exc:  # noqa: BLE001 - observability is optional
+    logger.warning("OBSERVABILITY | disabled: %s", exc)
+
 # Login-protected Admin Dashboard at /admin (v4.2, additive). Registers its own
 # blueprint + session config; does not touch any existing route or behaviour.
 init_admin(app)
+
+# v6.0 Enterprise Commerce (additive). Guarded exactly like the admin/database
+# modules so any commerce failure can never prevent the core app from starting.
+# Registers the JSON order/tracking API + admin Orders dashboard, ensures the
+# commerce schema exists, and exposes the catalog-order webhook handler.
+handle_catalog_order = None
+_COMMERCE_OK = False
+try:
+    import commerce
+    from commerce.api import commerce_api_bp
+    from commerce.webhook_orders import handle_catalog_order as _handle_catalog_order
+
+    app.register_blueprint(commerce_api_bp)
+
+    # v6.1 admin surfaces (RBAC users, CRM) + REST API docs — each guarded so a
+    # single module failure never blocks the others or the core app.
+    def _bp(module, name):
+        return lambda: getattr(__import__(module, fromlist=[name]), name)
+
+    for _label, _importer in (
+        ("Admin orders dashboard", _bp("admin.orders_routes", "admin_orders_bp")),
+        ("Admin users / RBAC", _bp("admin.users_routes", "admin_users_bp")),
+        ("Customer CRM", _bp("admin.crm_routes", "admin_crm_bp")),
+        ("REST API docs", _bp("commerce.api_docs", "api_docs_bp")),
+        # v7.0 surfaces.
+        ("Promotions (coupons/gift cards)", _bp("admin.promos_routes", "admin_promos_bp")),
+        ("Returns / RMA", _bp("admin.returns_routes", "admin_returns_bp")),
+        ("Catalog (bundles/wishlist/carts)", _bp("admin.catalog_routes", "admin_catalog_bp")),
+        ("Shipping", _bp("admin.shipping_routes", "admin_shipping_bp")),
+        ("Support tickets", _bp("admin.tickets_routes", "admin_tickets_bp")),
+        ("Settings UI", _bp("admin.settings_routes", "admin_settings_bp")),
+        ("Ops dashboards", _bp("admin.ops_routes", "admin_ops_bp")),
+        ("Broadcast manager", _bp("admin.broadcast_routes", "admin_broadcast_bp")),
+        ("Security (2FA/login history)", _bp("admin.security_routes", "admin_security_bp")),
+        ("Reports", _bp("admin.reports_routes", "admin_reports_bp")),
+        # v8.0 surfaces.
+        ("Multi-tenant / Stores", _bp("admin.tenants_routes", "admin_tenants_bp")),
+        ("Developer portal / API keys", _bp("admin.developer_routes", "admin_developer_bp")),
+        ("Compliance / audit", _bp("admin.compliance_routes", "admin_compliance_bp")),
+        ("Developer portal (public)", _bp("commerce.dev_portal", "dev_portal_bp")),
+        # v9.0 surfaces.
+        ("API usage analytics", _bp("admin.api_analytics_routes", "admin_api_analytics_bp")),
+        ("Recommendation insights", _bp("admin.insights_routes", "admin_insights_bp")),
+        ("AI commerce console", _bp("admin.ai_commerce_routes", "admin_ai_commerce_bp")),
+        ("Recommendations API", _bp("commerce.reco_api", "reco_api_bp")),
+        ("AI commerce API", _bp("commerce.ai_commerce_api", "ai_commerce_api_bp")),
+        # v10.0 AI agents.
+        ("Agent API", _bp("agents.agent_api", "agent_api_bp")),
+        ("Agents console", _bp("admin.agents_routes", "admin_agents_bp")),
+        ("Knowledge base", _bp("admin.knowledge_routes", "admin_knowledge_bp")),
+        ("Approvals inbox", _bp("admin.approvals_routes", "admin_approvals_bp")),
+        ("MCP tool server", _bp("mcp.server", "mcp_bp")),
+    ):
+        try:
+            app.register_blueprint(_importer())
+        except Exception as exc:  # noqa: BLE001 - each surface is optional
+            logger.error("COMMERCE | %s unavailable: %s", _label, exc)
+
+    commerce.bootstrap()  # ensure all commerce/v6.1/v8 tables exist
+
+    # v8.0: ensure the default tenant exists so single-store deployments work.
+    try:
+        from commerce.tenancy import ensure_default_tenant
+
+        ensure_default_tenant()
+    except Exception as exc:  # noqa: BLE001 - tenancy optional
+        logger.error("COMMERCE | default tenant bootstrap failed: %s", exc)
+
+    # v10.1: unify the database (merge any legacy mehaat_admin.db) and validate
+    # the OAuth token store at startup so persistence problems are visible early.
+    try:
+        from database.migrate_v10_1 import merge_admin_db
+
+        merge_admin_db()
+    except Exception as exc:  # noqa: BLE001 - migration must never break startup
+        logger.error("MIGRATE | admin DB merge failed: %s", exc)
+    try:
+        from shopify.auth import validate_and_recover_tokens
+
+        validate_and_recover_tokens()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("OAUTH_DB | token validation failed: %s", exc)
+
+    # v10.0: activate the human-approval gate for high-risk agent tools and
+    # register the RAG knowledge_search tool.
+    try:
+        from agents.approvals import install_gate
+
+        install_gate()
+    except Exception as exc:  # noqa: BLE001 - approval gate optional
+        logger.error("AGENTS | approval gate unavailable: %s", exc)
+    try:
+        if config.rag_enabled:
+            from knowledge.rag import register_tool as _register_kb_tool
+
+            _register_kb_tool()
+    except Exception as exc:  # noqa: BLE001 - knowledge tool optional
+        logger.error("AGENTS | knowledge tool registration failed: %s", exc)
+
+    # v6.1 background job workers — offload order side effects so the webhook
+    # returns fast. Idempotent; recovers any pending jobs on start.
+    if config.jobs_enabled:
+        try:
+            from commerce.jobs import register_default_handlers, start_workers
+
+            register_default_handlers()
+            try:
+                from commerce.broadcast import register_broadcast_handler
+
+                register_broadcast_handler()
+            except Exception as exc:  # noqa: BLE001 - broadcast is optional
+                logger.error("COMMERCE | broadcast handler unavailable: %s", exc)
+            start_workers()
+            logger.info("COMMERCE | Background job workers started (%d)", config.jobs_workers)
+        except Exception as exc:  # noqa: BLE001 - jobs are optional
+            logger.error("COMMERCE | Job workers unavailable (running synchronously): %s", exc)
+
+    handle_catalog_order = _handle_catalog_order
+    _COMMERCE_OK = True
+except Exception as exc:  # noqa: BLE001 - commerce must never break startup
+    logger.error("COMMERCE | v6 commerce unavailable, continuing as v5.1: %s", exc)
+
+@app.context_processor
+def _inject_commerce_flags() -> dict:
+    """Expose which v6/v6.1 admin surfaces exist + the current user's role.
+
+    Uses the live view registry so a nav link is only shown when its endpoint
+    actually exists — a missing blueprint can never break template rendering.
+    The role gates the user-management link to admins/owners.
+    """
+    from flask import session as _session
+
+    role = _session.get("admin_role") or ("owner" if _session.get("admin_user") else "")
+    role_rank = {"viewer": 0, "staff": 1, "manager": 2, "admin": 3, "owner": 4}
+    return {
+        "commerce_ui": "admin_orders.orders_list" in app.view_functions,
+        "crm_ui": "admin_crm.crm_list" in app.view_functions,
+        "users_ui": ("admin_users.users_list" in app.view_functions)
+        and (role_rank.get(role, 0) >= role_rank["admin"]),
+        "admin_role": role,
+        "is_admin_role": role_rank.get(role, 0) >= role_rank["admin"],
+        "has_view": lambda name: name in app.view_functions,
+    }
+
 
 # Secondary rate limiter for AI-generation calls specifically (protects Gemini
 # quota independent of the general WhatsApp message rate limiter).
@@ -130,12 +322,241 @@ def _validate_configuration() -> None:
 
 
 _validate_configuration()
+# v10.1: fail-fast startup validation with helpful errors. Only aborts boot when
+# STRICT_STARTUP=true and a *critical* variable is missing; otherwise it logs
+# clear warnings (preserving the existing boot-with-missing-vars behaviour).
+try:
+    from config import enforce_startup_validation
+
+    enforce_startup_validation()
+except SystemExit:
+    raise
+except Exception as exc:  # noqa: BLE001 - validation must not itself break boot
+    logger.error("CONFIG | startup validation error: %s", exc)
 bootstrap_database()  # no-op unless USE_DATABASE=true and SQLAlchemy is installed
 
 
 # --------------------------------------------------------------------------
 # Core message orchestration (registered as the WhatsApp webhook handler)
 # --------------------------------------------------------------------------
+
+def _format_tracking_reply(order: dict) -> str:
+    """Build a customer-facing order-status message from an order dict."""
+    stages = ["received", "confirmed", "packed", "shipped", "out_for_delivery", "delivered"]
+    labels = {
+        "received": "Received", "confirmed": "Confirmed", "packed": "Packed",
+        "shipped": "Shipped", "out_for_delivery": "Out For Delivery",
+        "delivered": "Delivered", "cancelled": "Cancelled", "refunded": "Refunded",
+    }
+    status = order.get("status", "received")
+    current_label = labels.get(status, status.title())
+    lines = [
+        f"📦 Order {order.get('order_number')}",
+        f"Status: {current_label}",
+    ]
+    if order.get("payment_status"):
+        lines.append(f"Payment: {str(order['payment_status']).title()}")
+    if status == "shipped" and order.get("tracking_number"):
+        lines.append(f"Tracking: {order['tracking_number']}")
+        if order.get("courier"):
+            lines.append(f"Courier: {order['courier']}")
+    # A compact pipeline view.
+    if status in stages:
+        idx = stages.index(status)
+        pipeline = "  ".join(
+            ("✅" if i <= idx else "⬜") + labels[s] for i, s in enumerate(stages)
+        )
+        lines.append("")
+        lines.append(pipeline)
+    return "\n".join(lines)
+
+
+def handle_image_message(message: dict, profile_name: str) -> None:
+    """Handle an inbound WhatsApp image via v9.0 visual product search."""
+    wa_number = message.get("from", "")
+    if not config.visual_search_enabled:
+        send_text_message(
+            wa_number,
+            "Thanks for the photo! Please describe what you're looking for in words "
+            "(e.g. 'red silk saree under 3000') and I'll find matches.",
+        )
+        return
+    try:
+        media_id = (message.get("image", {}) or {}).get("id", "")
+        from whatsapp.media import download_media
+
+        image_bytes = download_media(media_id)
+        if not image_bytes:
+            send_text_message(
+                wa_number,
+                "I couldn't open that image. Please try resending it, or describe what "
+                "you're looking for and I'll search by text.",
+            )
+            return
+        from commerce.visual_search import search_by_image
+
+        tenant_id = None
+        try:
+            from commerce.tenancy import current_tenant_id
+
+            tenant_id = current_tenant_id()
+        except Exception:  # noqa: BLE001
+            tenant_id = None
+        results = search_by_image(image_bytes, top_k=5, tenant_id=tenant_id)
+        if not results:
+            send_text_message(
+                wa_number,
+                "I couldn't find a close visual match yet. Try describing the item "
+                "(fabric, colour, occasion) and I'll search our catalogue.",
+            )
+            return
+        cards = [
+            {
+                "product_id": r.get("product_retailer_id"),
+                "retailer_id": r.get("product_retailer_id"),
+                "title": r.get("product_name") or "Similar product",
+                "price": r.get("price"),
+                "url": r.get("url"),
+            }
+            for r in results
+        ]
+        send_products(wa_number, cards, header="Here are visually similar pieces 👗")
+    except Exception as exc:  # noqa: BLE001 - never crash the webhook
+        logger.error("IMAGE | visual search failed for %s: %s", wa_number, exc)
+        send_text_message(
+            wa_number,
+            "Something went wrong reading that image. Please describe what you'd like "
+            "and I'll help you find it.",
+        )
+
+
+def handle_audio_message(message: dict, profile_name: str) -> None:
+    """Handle an inbound WhatsApp voice note via the v10.0 voice agent."""
+    wa_number = message.get("from", "")
+    if not config.voice_enabled:
+        send_text_message(
+            wa_number,
+            "🎤 Thanks for the voice note! Please type your question and I'll help right away.",
+        )
+        return
+    try:
+        audio = message.get("audio", {}) or {}
+        from whatsapp.media import download_media
+        from agents.voice import handle_voice
+
+        audio_bytes = download_media(audio.get("id", "")) or b""
+        reply = handle_voice(wa_number, audio_bytes, mime=audio.get("mime_type", "audio/ogg"))
+        send_text_message(wa_number, reply)
+    except Exception as exc:  # noqa: BLE001 - never crash the webhook
+        logger.error("AUDIO | voice handling failed for %s: %s", wa_number, exc)
+        send_text_message(
+            wa_number,
+            "🎤 I couldn't process that voice note. Please type your question and I'll help.",
+        )
+
+
+def _try_commerce_reply(wa_number: str, text: str) -> bool:
+    """Handle v6 commerce conversational intents (order tracking).
+
+    Returns True when a reply was sent (so the caller stops), False otherwise.
+    Fully guarded: any failure returns False and lets the normal pipeline run.
+    """
+    if not _COMMERCE_OK or not config.commerce_enabled:
+        return False
+    try:
+        from commerce.intent import detect_intent
+        from commerce.service import order_service
+
+        intent = detect_intent(text or "")
+
+        if intent == "track_order":
+            order = order_service.latest_order_for(wa_number)
+            if not order:
+                send_text_message(
+                    wa_number,
+                    "I couldn't find a recent order linked to this number. If you placed one "
+                    "via our catalog, please share your order number (e.g. MH-2026-000123).",
+                )
+            else:
+                send_text_message(wa_number, _format_tracking_reply(order))
+            return True
+
+        if intent in ("support", "human_agent", "escalation"):
+            from commerce.tickets import create_ticket
+
+            ticket = create_ticket(
+                subject="WhatsApp support request", wa_number=wa_number,
+                body=text, author="customer",
+                priority="high" if intent == "escalation" else "normal",
+            )
+            num = ticket.get("ticket_number", "")
+            send_text_message(
+                wa_number,
+                f"🙏 We've created a support ticket {num} and our team will reach out "
+                "shortly. You can keep replying here with more details.",
+            )
+            return True
+
+        if intent in ("return", "refund"):
+            from commerce.returns import create_return
+
+            order = order_service.latest_order_for(wa_number)
+            if not order:
+                send_text_message(
+                    wa_number,
+                    "I couldn't find a recent order to process a return/refund. Please share "
+                    "your order number (e.g. MH-2026-000123).",
+                )
+                return True
+            rr = create_return(
+                order["id"], kind=("refund" if intent == "refund" else "return"),
+                reason=text, wa_number=wa_number, actor="whatsapp",
+            )
+            send_text_message(
+                wa_number,
+                f"We've logged your {intent} request ({rr.get('rma_number','')}) for order "
+                f"{order['order_number']}. Our team will review and update you soon.",
+            )
+            return True
+
+        # v9.0: recommendation + stylist intents (keyword-gated so they don't
+        # hijack normal product search).
+        low = (text or "").lower()
+        if config.recommendations_enabled and any(
+            kw in low for kw in ("recommend", "suggest", "what should i buy", "aur dikhao similar",
+                                 "similar", "you may like", "kya lena chahiye")
+        ):
+            from commerce.recommendations import recommend_for_whatsapp
+
+            recs = recommend_for_whatsapp(wa_number, limit=5)
+            if recs:
+                cards = [
+                    {"product_id": r.get("product_retailer_id"),
+                     "retailer_id": r.get("product_retailer_id"),
+                     "title": r.get("product_name") or "Recommended",
+                     "price": r.get("price")}
+                    for r in recs
+                ]
+                send_products(wa_number, cards, header="You might also love these ✨")
+                return True
+
+        if config.ai_stylist_enabled and any(
+            kw in low for kw in ("what should i wear", "style me", "styling", "which blouse",
+                                 "match with", "kya pehnu", "outfit", "personal shopper",
+                                 "help me pick", "occasion")
+        ):
+            from commerce.personal_shopper import advise
+
+            reply = advise(wa_number, text or "")
+            if reply:
+                send_text_message(wa_number, reply)
+                return True
+
+        return False
+    except Exception as exc:  # noqa: BLE001 - never break the message pipeline
+        logger.error("COMMERCE | commerce intent reply failed: %s", exc)
+        return False
+
 
 def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) -> None:
     """Route an incoming customer message to the correct handler and reply.
@@ -163,6 +584,25 @@ def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) ->
             "Please describe what you're looking for (e.g. 'silk saree under 3000').",
         )
         return
+
+    # v6.0 commerce intents (order tracking) — additive, early, fully guarded.
+    if _try_commerce_reply(wa_number, raw_text):
+        return
+
+    # v10.0: when enabled, route the message through the AI agent orchestrator
+    # instead of the legacy search/FAQ/Gemini pipeline. Off by default.
+    if _COMMERCE_OK and config.agents_whatsapp:
+        try:
+            from agents.orchestrator import orchestrator
+
+            resp = orchestrator.route(
+                raw_text, {"channel": "whatsapp", "wa_number": wa_number}
+            )
+            if resp and resp.text:
+                _finalize_reply(wa_number, resp.text, time.perf_counter())
+                return
+        except Exception as exc:  # noqa: BLE001 - fall back to the legacy pipeline
+            logger.error("AGENTS | orchestrator routing failed: %s", exc)
 
     start_time = time.perf_counter()
 
@@ -455,6 +895,25 @@ def _log_interaction(wa_number: str, user_message: str, reply: str, context: str
 
 init_webhook(handle_customer_message)
 
+# Wire the WhatsApp Commerce catalog-order handler (v6.0). When commerce is
+# disabled/unavailable, order messages simply fall back to the text pipeline.
+if _COMMERCE_OK and handle_catalog_order is not None:
+    init_order_webhook(handle_catalog_order)
+
+# v9.0: route inbound images to visual product search.
+if _COMMERCE_OK:
+    try:
+        init_image_webhook(handle_image_message)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("IMAGE | could not register image handler: %s", exc)
+
+# v10.0: route inbound voice notes to the voice agent.
+if _COMMERCE_OK:
+    try:
+        init_audio_webhook(handle_audio_message)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("AUDIO | could not register audio handler: %s", exc)
+
 
 # --------------------------------------------------------------------------
 # Health check + status endpoints
@@ -484,6 +943,20 @@ def health_ready():
     report = readiness()
     status_code = 200 if report.get("ready") else 503
     return jsonify(report), status_code
+
+
+@app.route("/metrics", methods=["GET"])
+def metrics():
+    """Prometheus-format metrics endpoint (v7.0). Disabled via METRICS_ENABLED=false."""
+    if not config.metrics_enabled:
+        return "metrics disabled\n", 404, {"Content-Type": "text/plain"}
+    try:
+        from utils.observability import render_metrics
+
+        return render_metrics(), 200, {"Content-Type": "text/plain; version=0.0.4"}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("METRICS | render failed: %s", exc)
+        return "metrics error\n", 500, {"Content-Type": "text/plain"}
 
 
 # --------------------------------------------------------------------------

@@ -1,0 +1,63 @@
+{% extends "admin/base.html" %}
+{% block title %}Users{% endblock %}
+{% block heading %}Users &amp; Roles{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar" style="margin-bottom:16px">
+  <span class="subtle">Dashboard users with role-based access.</span>
+  <span class="spacer" style="flex:1"></span>
+  <a class="btn primary" href="{{ url_for('admin_users.user_new') }}"><i class="bi bi-person-plus"></i> New User</a>
+</div>
+
+<div class="card-surface panel">
+  <h3>Users <span class="subtle">· {{ users|length }} total</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Username</th><th>Full name</th><th>Role</th>
+        <th>Active</th><th>Last login</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td class="mono">{{ u.username }}</td>
+        <td>{{ u.full_name or '—' }}</td>
+        <td><span class="pill info">{{ u.role|title }}</span></td>
+        <td>
+          {% if u.active %}
+          <span class="pill good">Active</span>
+          {% else %}
+          <span class="pill bad">Disabled</span>
+          {% endif %}
+        </td>
+        <td class="subtle">{{ (u.last_login_at or '')[:16].replace('T',' ') or '—' }}</td>
+        <td style="white-space:nowrap">
+          <a class="pill info" href="{{ url_for('admin_users.user_edit', user_id=u.id) }}"><i class="bi bi-pencil"></i> Edit</a>
+          <form method="POST" action="{{ url_for('admin_users.user_delete', user_id=u.id) }}"
+                style="display:inline" onsubmit="return confirm('Delete user {{ u.username }}?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button class="pill bad" type="submit" style="border:none;cursor:pointer"><i class="bi bi-trash"></i> Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6"><div class="empty"><i class="bi bi-people"></i>No users yet. Create one to get started.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

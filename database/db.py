@@ -54,6 +54,15 @@ def get_engine():
         connect_args = {}
         engine_kwargs = {"pool_pre_ping": True, "future": True}
         if url.startswith("sqlite"):
+            # v10.1: pin sqlite to the ONE canonical absolute file so the
+            # commerce data lives in the same mehaat.db as the token store and
+            # admin dashboard (fixes DB-path fragmentation).
+            try:
+                from utils.dbpath import canonical_sqlite_url
+
+                url = canonical_sqlite_url()
+            except Exception as exc:  # noqa: BLE001 - fall back to the raw URL
+                logger.warning("DATABASE | canonical path unavailable: %s", exc)
             connect_args = {"check_same_thread": False}
         else:
             # Sensible pool defaults for server databases (Postgres/MySQL).

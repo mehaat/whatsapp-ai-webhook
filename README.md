@@ -1,6 +1,98 @@
+
 # ME-HAAT Fashion AI Bot v5.1 Production Edition
 
 Production-ready WhatsApp AI Sales Assistant for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — on full **Shopify OAuth**, a modular architecture, live product cards, a login-protected admin dashboard, and enterprise foundations.
+=======
+# ME-HAAT Fashion AI Bot v10.1 Stable Edition
+
+A stability & hardening release over v10.0 — **no features removed, full backward compatibility, zero regression** (~361 tests passing). See `CHANGELOG.md`, `UPGRADE_v10_TO_v10.1.md`, `DATABASE_MIGRATION.md`, and `TEST_CHECKLIST.md`.
+
+- **Fixed: Shopify OAuth persistence** — the `installed_shops=1 → shop_count=0` bug is gone. All layers now use ONE deterministic, absolute `mehaat.db` (`utils/dbpath.py`); token saves use an `IMMEDIATE` transaction with read-back verification; startup runs `validate_and_recover_tokens()` (integrity check + token validation + clear logging).
+- **Database unification** — the OAuth token store, admin dashboard, and SQLAlchemy commerce data live in one `mehaat.db`. The admin dashboard's three colliding tables became `dash_customers`/`dash_conversations`/`dash_orders`, and `database/migrate_v10_1.py` auto-merges any legacy `mehaat_admin.db` on boot (idempotent, no data loss).
+- **Tracker + event pipeline** — the tracker no longer hides DB failures (dev: full tracebacks; prod: ERROR logs), so the dashboard's **Products Sent / AI Replies / counters now populate** (they auto-refresh every 7s). Full pipeline: inbound → search → products-sent → Gemini reco → record-ai → outbound.
+- **Smarter search** — `extract_search_filters` now parses "799 wali saree", "lal cotton saree", "banarasi silk under 3000", "green cotton under 999", ranges, occasions, and Hindi/Hinglish/typos.
+- **Richer `/health`** (database path/size/integrity, OAuth token count + last install, component-configured flags), **per-component structured logs** (`shopify.log`, `oauth.log`, `ai.log`, …), and **fail-fast startup validation** (`STRICT_STARTUP`).
+
+## ME-HAAT Fashion AI Bot v10.0 Enterprise Edition
+
+Production-ready WhatsApp **Commerce Platform** for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — Shopify OAuth, ordering, payments, invoices, tracking, coupons/returns/shipping, CRM, RBAC/2FA, Celery/Redis, monitoring, multi-tenant, compliance, Kubernetes/Helm, Advanced AI Commerce, and a **multi-agent AI orchestrator** with a RAG knowledge base, an MCP tool server, and a human-approval workflow.
+
+## What's New in v10.0 — AI-First Architecture
+
+Additive over v9.0 — all prior features preserved; every agent surface is guarded and feature-flagged. This release shifts from features to an **agentic architecture**.
+
+- **AI Orchestrator + specialist agents** — one orchestrator classifies each message and routes it to the right specialist: **Sales**, **Customer Support**, **Inventory**, **Marketing**, **Analytics**, and **Voice**. Each agent works over a shared **tool registry** (search, order status, returns, tickets, recommendations, stylist, stock, analytics, coupons, broadcasts, refunds…). Exposed via `POST /api/agent`, an `/admin/agents` console, and — behind `AGENTS_WHATSAPP` — the live WhatsApp chat. Agents phrase replies with Gemini when a key is set and a clean deterministic fallback otherwise (so they run fully offline).
+- **RAG Knowledge Base** — ingest policies/FAQs/product docs (`/admin/knowledge`); an **offline TF-IDF retriever** grounds answers in your documents (Gemini answer-composition when a key is present). Surfaced as a `knowledge_search` agent tool.
+- **MCP (Model Context Protocol) tool server** — a JSON-RPC endpoint at **`POST /mcp`** (`initialize`, `tools/list`, `tools/call`, `ping`) exposes the store's tools to external MCP clients (Claude Desktop, IDEs). High-risk tools remain approval-gated; `docs/MCP.md` has the details.
+- **Voice Agent** — inbound WhatsApp voice notes are downloaded and transcribed (Gemini audio when configured), then routed through the orchestrator; graceful "please type" fallback when transcription is unavailable.
+- **Human Approval Workflow** — sensitive actions (refunds, coupons, large broadcasts) are held as **approval requests** an admin reviews at `/admin/approvals` before execution; small broadcasts auto-approve under a configurable threshold. Wired directly into the tool registry so agents *and* MCP callers are both gated.
+- **Visual Product Search** — carried forward from v9.0 (send a photo → similar products).
+
+## What's New in v9.0
+
+## What's New in v9.0
+
+Additive over v8.0 — all prior features preserved; every new surface is guarded and feature-flagged.
+
+- **Advanced AI Commerce** — **Visual Product Search** (send a photo on WhatsApp → visually similar products, via an offline color-histogram + perceptual-hash matcher with a Gemini-Vision upgrade path), an **AI Stylist** (complete-the-look + occasion outfit suggestions for Indian ethnic wear), a **Personal Shopping Assistant** (guided budget/occasion/colour conversation), and a **Recommendation Engine** (frequently-bought-together, trending, and personalized picks from order history). Exposed on WhatsApp and via `/api/visual-search`, `/api/recommendations/*`, `/api/stylist/*`, plus an `/admin/ai` console and a Recommendations insights page.
+- **Developer Portal 2.0** — a comprehensive OpenAPI spec covering every endpoint, an enhanced `/developers` portal with curl/Python/JS code samples and webhook docs, and **per-key usage analytics** at `/admin/developer/analytics`.
+- **Deep Sentry + Redis cache/HA** — Sentry with Flask **and Celery** integrations, tracing, and release tagging; a Redis **cache abstraction** supporting single-node, **Sentinel (HA failover)**, and **Cluster**, with automatic in-memory fallback; and **shared Redis-backed API rate limiting** across workers.
+- **Kubernetes + Helm** — a full Helm chart (`deploy/helm/mehaat`) for web + Celery worker + beat, with Service, Ingress, HPA autoscaling, ConfigMap/Secret, PVC, PodDisruptionBudget, and an Alembic migration hook — plus raw `deploy/k8s/` manifests and `docs/KUBERNETES.md`.
+
+## What's New in v8.0
+
+## What's New in v8.0
+
+Additive over v7.0 — all prior features preserved. The five enterprise-scale areas:
+
+- **Redis + Celery background processing** — set `QUEUE_BACKEND=celery` + `REDIS_URL` and every background job (notifications, invoices, draft orders, reservations, broadcasts) runs on a Celery worker pool, with a **Celery beat** schedule for abandoned-cart recovery and shipment-tracking refresh. `run_async` transparently routes to Celery when enabled and falls back to the in-process queue otherwise. `docker-compose` ships `redis`, `worker`, and `beat` services.
+- **Prometheus + Grafana + Sentry monitoring** — a Prometheus **`/metrics`** endpoint (requests, latency, 5xx, orders, payments, revenue, notifications, job queue depth), a ready-to-import **Grafana dashboard** with auto-provisioned datasource, a Prometheus scrape config, and optional **Sentry** error monitoring (`SENTRY_DSN`). Compose ships `prometheus` + `grafana`.
+- **OpenAPI/Swagger Developer Portal** — a public **`/developers`** portal, interactive Swagger at **`/api/docs`**, and DB-backed **API keys** (`mh_live_…`, hashed at rest, per-key scopes + rate limits) managed at `/admin/developer`. Keys authenticate the REST API via `X-API-Key`.
+- **Multi-store / multi-tenant architecture** — a `Tenant` model with resolution by WhatsApp `phone_number_id`, Shopify domain, host, or `X-Tenant` header; a request-scoped tenant context; orders tagged with `tenant_id`; and a **Stores** admin console (`/admin/tenants`) with a "view-as" switcher. Off by default (single implicit default tenant) so existing deployments are unaffected.
+- **Enterprise audit logs & compliance** — a **tamper-evident audit hash chain** with an integrity verifier, **GDPR/DPDP data-subject export** and **right-to-erasure**, PII access logging, retention purge, and a **Compliance** admin console (`/admin/compliance`) with an audit-log viewer + export.
+
+## What's New in v7.0
+
+## What's New in v7.0
+
+Additive over v6.1 — all prior features preserved. See **`docs/V7_ROADMAP.md`** for the full status of all 20 enterprise categories (done / foundation / planned).
+
+- **Commerce depth** — coupon & discount engine, gift cards, bundle products, wishlist, abandoned-cart recovery, and a return/refund/exchange (RMA) workflow. Admin consoles under `/admin/promos`, `/admin/catalog`, `/admin/returns`; conversational return & support intents on WhatsApp.
+- **Fulfilment & shipping** — a courier adapter (`shipping/`) with Shiprocket, Delhivery and an always-works Manual provider; shipment lifecycle, tracking, ReportLab **shipping labels + packing slips**, and pickup scheduling at `/admin/shipping`.
+- **Admin & ops** — support tickets, a Settings UI, Payments and Employee dashboards, a WhatsApp **broadcast manager** (consent-aware), and GST/Sales/Inventory/Customer/Product **reports** with CSV/Excel/PDF export.
+- **Security** — admin **2FA (TOTP)**, IP allowlist, and login history, on top of the existing JWT/RBAC/API-keys/audit/CSRF/rate-limiting.
+- **Platform & ops** — **Dockerfile + docker-compose + GitHub Actions CI + Nginx** sample, **Alembic** migrations (alongside the boot-time auto-migrate), order **soft-delete**, optional **Sentry**, and a Prometheus **`/metrics`** endpoint.
+
+## What's New in v6.1
+
+## What's New in v6.1
+
+Additive over v6.0 — all existing features preserved and backward compatible; every v6.1 capability degrades gracefully when disabled.
+
+- **Customer CRM** — a `/admin/commerce/crm` console: customer list with lifetime value, order count and last-order date; per-customer profile with full order history, free-text notes, tags, and auto-suggested segments (new / repeat / vip).
+- **Multi-user Admin Roles (RBAC)** — a `admin_users` table and `/admin/users` management console with five roles (viewer, staff, manager, admin, owner). Named users log in with their own password and role; the env `ADMIN_USERNAME`/`ADMIN_PASSWORD` remains a built-in **owner** superuser. A `role_required(...)` decorator gates privileged routes (e.g. user management requires admin/owner).
+- **Background Jobs & Queue** — a durable `jobs` table plus an in-process worker pool. Order side effects (Shopify draft order, invoice, notifications, inventory reservation) run asynchronously so the webhook acks fast; jobs retry with backoff and recover after a restart. Set `JOBS_ENABLED=false` to run everything inline.
+- **Inventory Reservation** — a reservation ledger that reserves stock when an order is placed, releases it on cancel/refund, and commits it on fulfilment. Optionally mirrors reservations to Shopify inventory (`INVENTORY_SYNC_ENABLED`, needs `write_inventory`).
+- **REST API Documentation** — an OpenAPI 3.0 spec at `/api/openapi.json` and interactive **Swagger UI at `/api/docs`**, plus a written `docs/API_REFERENCE.md`, covering the order/tracking/payment API.
+
+## What's New in v6.0 (Enterprise Commerce Edition)
+
+## What's New in v6.0 (Enterprise Commerce Edition)
+
+Everything from v5.1 is preserved and backward compatible. The whole commerce surface is additive and controlled by `COMMERCE_ENABLED` (default on); set it to `false` and the app behaves exactly like v5.1.
+
+- **WhatsApp catalog orders** — the webhook now handles `message.type == "order"`. Each order is parsed (customer, catalog id, retailer ids, quantities, unit prices, currency, total), persisted, and assigned an internal number like `MH-2026-000001`. Meta webhook retries are de-duplicated so an order is never created twice.
+- **Automatic Shopify draft orders** — a Shopify draft order is created for each catalog order (best-effort), storing the draft id, checkout and invoice URLs back on the order.
+- **Customer notifications** — bilingual (Hindi/English) WhatsApp messages for order received, confirmed, payment pending, shipped, and delivered.
+- **Live order tracking** — a JSON API (`GET /orders`, `GET /orders/<id>`, `POST /orders/update`, `GET /tracking/<id>`) plus a conversational path: "where is my order" / "track my order" (and Hindi equivalents) returns the latest order's status pipeline.
+- **Admin Orders dashboard** — a full Orders module at `/admin/commerce/orders`: filterable/searchable table, per-order detail with a tracking timeline, one-click actions (confirm, cancel, mark packed/shipped/delivered, refund, generate invoice, generate payment link), and CSV/Excel/PDF export. Plus an **Order Analytics** page (today/monthly/pending/delivered/cancelled, revenue, AOV, conversion rate, top products/customers, sales by state/city, daily/monthly/yearly charts).
+- **Payment links** — a provider-adapter system supporting **Razorpay, Stripe, Cashfree, PhonePe, and Manual UPI**, with signature-verified payment webhooks (`POST /payments/webhook/<provider>`). Manual UPI works with no gateway account; the others activate when their credentials are set.
+- **PDF invoices** — professional ReportLab invoices with logo, GST/business identity, line items, discount/shipping/tax/grand total, a QR code, and a unique invoice number.
+- **AI intent detection** — bilingual recognition of browse, order, track, payment, return, refund, cancel, delivery-time, invoice, coupon, stock, support, human-agent and escalation intents.
+- **Enterprise data model + automatic migrations** — new `orders`, `order_items`, `payments`, `tracking`, `invoices`, `notifications`, `audit_logs`, `analytics` tables on SQLite **or** PostgreSQL, created and additively migrated on startup (no manual DB steps).
+- **Security** — JWT/API-key auth on the order API, Meta webhook signature verification (v5.1), Shopify HMAC (existing), per-provider payment webhook signature checks, CSRF on admin actions, parameterized SQL throughout.
+- **Tests** — 78 passing, including an end-to-end catalog-order webhook test.
+>>>>>>> feature/v10.1-stable
 
 ## What's New in v5.1 (Production Edition)
 

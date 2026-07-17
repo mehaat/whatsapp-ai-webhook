@@ -1,0 +1,106 @@
+{% extends "admin/base.html" %}
+{% block title %}Shipments{% endblock %}
+{% block heading %}Fulfilment &amp; Shipping{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="card-surface panel">
+  <h3>Create shipment</h3>
+  <div class="toolbar">
+    <input type="hidden" id="csrfToken" value="{{ csrf_token }}" />
+    <input class="field" type="number" id="createOrderId" min="1"
+           placeholder="Order ID…" style="width:auto" />
+    <select class="field" id="createProvider" style="width:auto">
+      {% for p in providers %}
+      <option value="{{ p }}" {{ 'selected' if p==default_provider }}>{{ p|title }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn primary" type="button" onclick="submitCreate()">
+      <i class="bi bi-truck"></i> Create Shipment
+    </button>
+    <span class="subtle">Default courier: {{ default_provider|title }}</span>
+  </div>
+  <form id="createForm" method="POST" style="display:none">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="provider" id="createProviderField" />
+  </form>
+</div>
+
+<form class="toolbar" method="GET" action="{{ url_for('admin_shipping.shipments_list') }}">
+  <select class="field" name="status" style="width:auto">
+    <option value="">All statuses</option>
+    {% for s in ['created','in_transit','out_for_delivery','delivered','returned','cancelled'] %}
+    <option value="{{ s }}" {{ 'selected' if status==s }}>{{ s.replace('_',' ')|title }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
+  <a class="btn ghost" href="{{ url_for('admin_shipping.shipments_list') }}"><i class="bi bi-x-circle"></i> Reset</a>
+</form>
+
+<div class="card-surface panel">
+  <h3>Shipments</h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>ID</th><th>Order</th><th>Provider</th><th>Courier</th>
+        <th>AWB</th><th>Status</th><th>Pickup</th><th>Created</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in shipments %}
+      <tr>
+        <td class="mono"><a href="{{ url_for('admin_shipping.shipment_detail', sid=s.id) }}">#{{ s.id }}</a></td>
+        <td class="mono">{{ s.order_id }}</td>
+        <td>{{ s.provider|title }}</td>
+        <td>{{ s.courier_name or '—' }}</td>
+        <td class="mono">{{ s.awb or '—' }}</td>
+        <td>
+          <span class="pill {{ 'good' if s.status=='delivered' else 'bad' if s.status in ['returned','cancelled'] else 'info' }}">{{ s.status.replace('_',' ')|title }}</span>
+        </td>
+        <td class="subtle">{{ (s.pickup_scheduled_at[:16].replace('T',' ')) if s.pickup_scheduled_at else '—' }}</td>
+        <td class="subtle">{{ (s.created_at or '')[:16].replace('T',' ') }}</td>
+        <td><a class="pill info" href="{{ url_for('admin_shipping.shipment_detail', sid=s.id) }}">Open</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9"><div class="empty"><i class="bi bi-truck"></i>No shipments yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <div class="toolbar" style="margin-top:16px;justify-content:space-between">
+    <span class="subtle">Page {{ page }}</span>
+    <span>
+      {% if page > 1 %}
+      <a class="btn ghost" href="{{ url_for('admin_shipping.shipments_list', status=status, page=page-1) }}"><i class="bi bi-chevron-left"></i> Prev</a>
+      {% endif %}
+      {% if has_next %}
+      <a class="btn ghost" href="{{ url_for('admin_shipping.shipments_list', status=status, page=page+1) }}">Next <i class="bi bi-chevron-right"></i></a>
+      {% endif %}
+    </span>
+  </div>
+</div>
+
+<script>
+  function submitCreate() {
+    var oid = document.getElementById('createOrderId').value;
+    if (!oid) { alert('Enter an order ID.'); return; }
+    var provider = document.getElementById('createProvider').value;
+    var form = document.getElementById('createForm');
+    form.action = "{{ url_for('admin_shipping.create_shipment', order_id=0) }}".replace(/0$/, oid);
+    document.getElementById('createProviderField').value = provider;
+    form.submit();
+  }
+</script>
+{% endblock %}

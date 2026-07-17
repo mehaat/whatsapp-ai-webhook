@@ -1,0 +1,84 @@
+{% extends "admin/base.html" %}
+{% set is_edit = (mode == 'edit') %}
+{% block title %}{{ 'Edit User' if is_edit else 'New User' }}{% endblock %}
+{% block heading %}{{ 'Edit User' if is_edit else 'New User' }}{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar" style="margin-bottom:16px">
+  <a class="btn ghost" href="{{ url_for('admin_users.users_list') }}"><i class="bi bi-arrow-left"></i> Back to Users</a>
+</div>
+
+<div class="card-surface panel" style="max-width:640px">
+  <h3>{{ 'Edit ' + user.username if is_edit else 'Create a new user' }}</h3>
+
+  <form method="POST"
+        action="{{ url_for('admin_users.user_edit', user_id=user.id) if is_edit else url_for('admin_users.user_new') }}"
+        autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+    <label for="username">Username</label>
+    {% if is_edit %}
+    <input class="field" id="username" type="text" value="{{ user.username }}" disabled />
+    {% else %}
+    <input class="field" id="username" name="username" type="text" required maxlength="128"
+           value="{{ user.username if user else '' }}" autofocus />
+    {% endif %}
+
+    <label for="full_name" style="margin-top:14px">Full name</label>
+    <input class="field" id="full_name" name="full_name" type="text" maxlength="255"
+           value="{{ user.full_name or '' if user else '' }}" />
+
+    <label for="email" style="margin-top:14px">Email</label>
+    <input class="field" id="email" name="email" type="email" maxlength="255"
+           value="{{ user.email or '' if user else '' }}" />
+
+    <label for="role" style="margin-top:14px">Role</label>
+    <select class="field" id="role" name="role">
+      {% for r in roles %}
+      <option value="{{ r }}" {{ 'selected' if user and user.role == r else ('selected' if not user and r == 'staff') }}>{{ r|title }}</option>
+      {% endfor %}
+    </select>
+
+    {% if not is_edit %}
+    <label for="password" style="margin-top:14px">Password</label>
+    <input class="field" id="password" name="password" type="password" required maxlength="256" />
+    {% endif %}
+
+    {% if is_edit %}
+    <label style="margin-top:14px;display:flex;align-items:center;gap:8px">
+      <input type="checkbox" name="active" {{ 'checked' if user.active }} /> Active
+    </label>
+    {% endif %}
+
+    <div class="toolbar" style="margin-top:22px">
+      <button class="btn primary" type="submit"><i class="bi bi-check2"></i> {{ 'Save changes' if is_edit else 'Create user' }}</button>
+      <a class="btn ghost" href="{{ url_for('admin_users.users_list') }}">Cancel</a>
+    </div>
+  </form>
+</div>
+
+{% if is_edit %}
+<div class="card-surface panel" style="max-width:640px;margin-top:20px">
+  <h3>Reset password</h3>
+  <form method="POST" action="{{ url_for('admin_users.user_password', user_id=user.id) }}" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label for="new_password">New password</label>
+    <input class="field" id="new_password" name="password" type="password" required maxlength="256" />
+    <div class="toolbar" style="margin-top:18px">
+      <button class="btn primary" type="submit"><i class="bi bi-key"></i> Reset password</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

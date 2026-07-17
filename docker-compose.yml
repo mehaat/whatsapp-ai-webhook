@@ -1,0 +1,103 @@
+# ME-HAAT Fashion AI Bot v8.0 — full enterprise stack.
+# Usage: cp .env.example .env && docker compose up --build
+#
+# Brings up: the app, PostgreSQL, Redis, Celery worker + beat, Prometheus, and
+# Grafana. For a minimal run you can `docker compose up app` (SQLite, in-process
+# queue) — the other services are additive.
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://mehaat:mehaat@db:5432/mehaat
+      REDIS_URL: redis://redis:6379/0
+      QUEUE_BACKEND: celery
+      INVOICE_OUTPUT_DIR: /var/data/invoices
+      COMPLIANCE_EXPORT_DIR: /var/data/exports
+      TOKEN_STORE_PATH: /var/data/shop_tokens.json
+    volumes:
+      - app-data:/var/data
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+
+  # Celery worker — executes background jobs (notifications, invoices, drafts…).
+  worker:
+    build: .
+    command: celery -A celery_app.celery_app worker --loglevel=info -Q mehaat --concurrency=4
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://mehaat:mehaat@db:5432/mehaat
+      REDIS_URL: redis://redis:6379/0
+      QUEUE_BACKEND: celery
+      INVOICE_OUTPUT_DIR: /var/data/invoices
+    volumes:
+      - app-data:/var/data
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+
+  # Celery beat — periodic tasks (abandoned-cart recovery, tracking refresh).
+  beat:
+    build: .
+    command: celery -A celery_app.celery_app beat --loglevel=info
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      QUEUE_BACKEND: celery
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mehaat
+      POSTGRES_PASSWORD: mehaat
+      POSTGRES_DB: mehaat
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  app-data:
+  pg-data:
+  prometheus-data:
+  grafana-data:

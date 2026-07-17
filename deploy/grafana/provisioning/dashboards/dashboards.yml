@@ -1,0 +1,19 @@
+# ME-HAAT Fashion AI Bot v8.0 — Grafana dashboard provider.
+# Auto-loads dashboard JSON files from disk on startup.
+
+apiVersion: 1
+
+providers:
+  - name: mehaat
+    orgId: 1
+    folder: ME-HAAT
+    folderUid: mehaat
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      # JSON dashboards are mounted here via docker-compose (see MONITORING.md).
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -1,0 +1,76 @@
+{% extends "admin/base.html" %}
+{% block title %}Broadcast{% endblock %}
+{% block heading %}Broadcast Manager{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="card-surface panel" style="max-width:720px">
+  <h3>Compose broadcast</h3>
+  <p class="subtle" style="margin-top:-4px">
+    Sends a WhatsApp message to CRM customers matching the filters below. Sending
+    requires the <strong>manager</strong> role.
+  </p>
+
+  <div class="pill info" style="display:block;padding:12px 14px;margin:12px 0">
+    <i class="bi bi-people"></i>
+    Estimated recipients: <strong id="recipientCount">{{ recipient_count }}</strong>
+  </div>
+
+  <form method="POST" action="{{ url_for('admin_broadcast.broadcast_send') }}" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+    <label for="segment">Segment <span class="subtle">(optional)</span></label>
+    <input class="field" id="segment" name="segment" type="text" value="{{ segment }}"
+           placeholder="e.g. vip, regular" />
+
+    <label for="tag" style="margin-top:14px">Tag contains <span class="subtle">(optional)</span></label>
+    <input class="field" id="tag" name="tag" type="text" value="{{ tag }}"
+           placeholder="e.g. diwali" />
+
+    <label style="margin-top:14px;display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="consent_only" name="consent_only" {{ 'checked' if consent_only }} />
+      Only customers with marketing consent
+    </label>
+
+    <label for="message" style="margin-top:14px">Message</label>
+    <textarea class="field" id="message" name="message" rows="4" required
+              placeholder="Type your broadcast message…"></textarea>
+
+    <div class="toolbar" style="margin-top:22px">
+      <button class="btn primary" type="submit"><i class="bi bi-megaphone"></i> Send broadcast</button>
+    </div>
+  </form>
+</div>
+
+<script>
+(function () {
+  var seg = document.getElementById("segment");
+  var tag = document.getElementById("tag");
+  var consent = document.getElementById("consent_only");
+  var out = document.getElementById("recipientCount");
+  function refresh() {
+    var params = new URLSearchParams({
+      segment: seg.value || "",
+      tag: tag.value || "",
+      consent_only: consent.checked ? "1" : "0"
+    });
+    fetch("{{ url_for('admin_broadcast.broadcast_preview') }}?" + params.toString())
+      .then(function (r) { return r.json(); })
+      .then(function (d) { out.textContent = d.recipients; })
+      .catch(function () {});
+  }
+  [seg, tag].forEach(function (el) { el.addEventListener("input", refresh); });
+  consent.addEventListener("change", refresh);
+})();
+</script>
+{% endblock %}

@@ -20,7 +20,16 @@
     <input class="field" id="username" name="username" type="text" required autofocus maxlength="80" />
 
     <label for="password">Password</label>
-    <input class="field" id="password" name="password" type="password" required maxlength="256" />
+    <input class="field" id="password" name="password" type="password" required maxlength="256"
+           value="" />
+
+    {% if need_2fa %}
+    <label for="totp_code" style="margin-top:14px">Authenticator code</label>
+    <input class="field" id="totp_code" name="totp_code" type="text" inputmode="numeric"
+           autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" autofocus
+           placeholder="6-digit code" />
+    {% if prefill_username %}<input type="hidden" name="username" value="{{ prefill_username }}" />{% endif %}
+    {% endif %}
 
     <button class="btn primary" type="submit" style="width:100%;justify-content:center;margin-top:20px">
       <i class="bi bi-shield-lock"></i> Sign in

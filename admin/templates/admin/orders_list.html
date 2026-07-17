@@ -1,0 +1,98 @@
+{% extends "admin/base.html" %}
+{% block title %}Orders{% endblock %}
+{% block heading %}Orders{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<form class="toolbar" method="GET" action="{{ url_for('admin_orders.orders_list') }}">
+  <input class="field grow" type="search" name="q" value="{{ filters.query }}"
+         placeholder="Search order #, phone or customer…" />
+  <select class="field" name="status" style="width:auto">
+    <option value="">All statuses</option>
+    {% for s in ['received','confirmed','packed','shipped','out_for_delivery','delivered','cancelled','refunded'] %}
+    <option value="{{ s }}" {{ 'selected' if filters.status==s }}>{{ s.replace('_',' ')|title }}</option>
+    {% endfor %}
+  </select>
+  <select class="field" name="payment_status" style="width:auto">
+    <option value="">All payments</option>
+    {% for p in ['pending','paid','failed','refunded','expired'] %}
+    <option value="{{ p }}" {{ 'selected' if filters.payment_status==p }}>{{ p|title }}</option>
+    {% endfor %}
+  </select>
+  <input class="field" type="date" name="date_from" value="{{ filters.date_from }}" style="width:auto" title="From" />
+  <input class="field" type="date" name="date_to" value="{{ filters.date_to }}" style="width:auto" title="To" />
+  <button class="btn primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
+  <a class="btn ghost" href="{{ url_for('admin_orders.orders_list') }}"><i class="bi bi-x-circle"></i> Reset</a>
+  <span class="spacer" style="flex:1"></span>
+  {% set qs = request.query_string.decode('utf-8') %}
+  <a class="btn ghost" href="{{ url_for('admin_orders.orders_export', format='csv') }}{{ ('?' ~ qs) if qs }}"><i class="bi bi-filetype-csv"></i> CSV</a>
+  <a class="btn ghost" href="{{ url_for('admin_orders.orders_export', format='xlsx') }}{{ ('?' ~ qs) if qs }}"><i class="bi bi-file-earmark-spreadsheet"></i> Excel</a>
+  <a class="btn ghost" href="{{ url_for('admin_orders.orders_export', format='pdf') }}{{ ('?' ~ qs) if qs }}"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+</form>
+
+<div class="card-surface panel">
+  <h3>Orders <span class="subtle">· {{ total }} total</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Order #</th><th>Customer</th><th>Phone</th><th>Products</th>
+        <th class="tabular">Qty</th><th class="tabular">Amount</th>
+        <th>Payment</th><th>Status</th><th>Courier</th><th>Tracking</th>
+        <th>Created</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for o in orders %}
+      <tr>
+        <td class="mono"><a href="{{ url_for('admin_orders.order_detail', order_id=o.id) }}">{{ o.order_number }}</a></td>
+        <td>{{ o.customer_name or '—' }}</td>
+        <td class="mono">{{ o.wa_number }}</td>
+        <td title="{{ o._products }}">{{ o._products or '—' }}</td>
+        <td class="tabular">{{ o._qty }}</td>
+        <td class="tabular">{{ o.currency }} {{ '%.2f'|format(o.total_amount) }}</td>
+        <td>
+          <span class="pill {{ 'good' if o.payment_status=='paid' else 'bad' if o.payment_status in ['failed','expired'] else 'warn' }}">{{ o.payment_status|title }}</span>
+        </td>
+        <td>
+          <span class="pill {{ 'good' if o.status=='delivered' else 'bad' if o.status in ['cancelled','refunded'] else 'info' }}">{{ o.status.replace('_',' ')|title }}</span>
+        </td>
+        <td>{{ o.courier or '—' }}</td>
+        <td class="mono">{{ o.tracking_number or '—' }}</td>
+        <td class="subtle">{{ (o.created_at or '')[:16].replace('T',' ') }}</td>
+        <td><a class="pill info" href="{{ url_for('admin_orders.order_detail', order_id=o.id) }}">Open</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="12"><div class="empty"><i class="bi bi-box-seam"></i>No orders match these filters.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% if total_pages > 1 %}
+  <div class="toolbar" style="margin-top:16px;justify-content:space-between">
+    <span class="subtle">Showing {{ showing_from }}–{{ showing_to }} of {{ total }}</span>
+    <span>
+      {% set base_args = dict(request.args) %}
+      {% if page > 1 %}
+      <a class="btn ghost" href="{{ url_for('admin_orders.orders_list', **dict(base_args, page=page-1)) }}"><i class="bi bi-chevron-left"></i> Prev</a>
+      {% endif %}
+      <span class="subtle" style="margin:0 10px">Page {{ page }} / {{ total_pages }}</span>
+      {% if page < total_pages %}
+      <a class="btn ghost" href="{{ url_for('admin_orders.orders_list', **dict(base_args, page=page+1)) }}">Next <i class="bi bi-chevron-right"></i></a>
+      {% endif %}
+    </span>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,83 @@
+{% extends "admin/base.html" %}
+{% set is_edit = (mode == 'edit') %}
+{% block title %}{{ 'Edit Coupon' if is_edit else 'New Coupon' }}{% endblock %}
+{% block heading %}{{ 'Edit Coupon' if is_edit else 'New Coupon' }}{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar" style="margin-bottom:16px">
+  <a class="btn ghost" href="{{ url_for('admin_promos.coupons_list') }}"><i class="bi bi-arrow-left"></i> Back to Coupons</a>
+</div>
+
+{% set c = coupon or {} %}
+<div class="card-surface panel" style="max-width:680px">
+  <h3>{{ 'Edit ' + c.code if is_edit else 'Create a new coupon' }}</h3>
+
+  <form method="POST"
+        action="{{ url_for('admin_promos.coupon_edit', cid=c.id) if is_edit else url_for('admin_promos.coupon_new') }}"
+        autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+    <label for="code">Code</label>
+    <input class="field mono" id="code" name="code" type="text" maxlength="64"
+           value="{{ c.code or '' }}" placeholder="Auto-generated if blank" {{ 'autofocus' if not is_edit }} />
+
+    <label for="kind" style="margin-top:14px">Kind</label>
+    <select class="field" id="kind" name="kind">
+      <option value="percent" {{ 'selected' if c.kind == 'percent' or not c.kind }}>Percent (%)</option>
+      <option value="flat" {{ 'selected' if c.kind == 'flat' }}>Flat amount</option>
+    </select>
+
+    <label for="value" style="margin-top:14px">Value <span class="subtle">(percent points, or a flat amount)</span></label>
+    <input class="field" id="value" name="value" type="number" step="0.01" min="0"
+           value="{{ c.value if c.value is not none else '' }}" required />
+
+    <label for="min_order" style="margin-top:14px">Minimum order</label>
+    <input class="field" id="min_order" name="min_order" type="number" step="0.01" min="0"
+           value="{{ c.min_order if c.min_order is not none else '' }}" />
+
+    <label for="max_discount" style="margin-top:14px">Max discount <span class="subtle">(percent cap; optional)</span></label>
+    <input class="field" id="max_discount" name="max_discount" type="number" step="0.01" min="0"
+           value="{{ c.max_discount if c.max_discount is not none else '' }}" />
+
+    <label for="usage_limit" style="margin-top:14px">Global usage limit <span class="subtle">(blank = unlimited)</span></label>
+    <input class="field" id="usage_limit" name="usage_limit" type="number" step="1" min="0"
+           value="{{ c.usage_limit if c.usage_limit is not none else '' }}" />
+
+    <label for="per_customer_limit" style="margin-top:14px">Per-customer limit <span class="subtle">(blank = unlimited)</span></label>
+    <input class="field" id="per_customer_limit" name="per_customer_limit" type="number" step="1" min="0"
+           value="{{ c.per_customer_limit if c.per_customer_limit is not none else '' }}" />
+
+    <label for="starts_at" style="margin-top:14px">Starts at <span class="subtle">(UTC; optional)</span></label>
+    <input class="field" id="starts_at" name="starts_at" type="datetime-local"
+           value="{{ (c.starts_at or '')[:16] }}" />
+
+    <label for="expires_at" style="margin-top:14px">Expires at <span class="subtle">(UTC; optional)</span></label>
+    <input class="field" id="expires_at" name="expires_at" type="datetime-local"
+           value="{{ (c.expires_at or '')[:16] }}" />
+
+    <label for="description" style="margin-top:14px">Description</label>
+    <input class="field" id="description" name="description" type="text" maxlength="500"
+           value="{{ c.description or '' }}" />
+
+    <label style="margin-top:14px;display:flex;align-items:center;gap:8px">
+      <input type="checkbox" name="active" {{ 'checked' if c.active or not is_edit }} /> Active
+    </label>
+
+    <div class="toolbar" style="margin-top:22px">
+      <button class="btn primary" type="submit"><i class="bi bi-check2"></i> {{ 'Save changes' if is_edit else 'Create coupon' }}</button>
+      <a class="btn ghost" href="{{ url_for('admin_promos.coupons_list') }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

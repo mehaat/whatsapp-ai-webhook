@@ -1,0 +1,144 @@
+{% extends "admin/base.html" %}
+{% block title %}Compliance{% endblock %}
+{% block heading %}Compliance &amp; Data Privacy{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar" style="margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+  <span class="subtle">GDPR / DPDP data-subject rights and a tamper-evident audit trail.</span>
+  <span class="spacer" style="flex:1"></span>
+  <a class="btn" href="{{ url_for('admin_compliance.audit_log') }}"><i class="bi bi-list-check"></i> Audit Log</a>
+</div>
+
+<!-- Audit integrity badge -->
+<div class="card-surface panel" style="margin-bottom:16px">
+  <h3>Audit-trail integrity</h3>
+  <p>
+    {% if integrity.ok %}
+      <span class="pill good" style="padding:8px 14px"><i class="bi bi-shield-check"></i> Verified</span>
+      <span class="subtle">&nbsp;{{ integrity.count }} chained rows — no tampering detected.</span>
+    {% else %}
+      <span class="pill bad" style="padding:8px 14px"><i class="bi bi-shield-exclamation"></i> Chain broken</span>
+      <span class="subtle">
+        &nbsp;{% if integrity.broken_at %}First mismatch at row #{{ integrity.broken_at }}.{% else %}Verification could not complete.{% endif %}
+      </span>
+    {% endif %}
+  </p>
+  <form method="POST" action="{{ url_for('admin_compliance.audit_verify') }}" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button class="btn" type="submit"><i class="bi bi-arrow-repeat"></i> Re-verify chain</button>
+  </form>
+</div>
+
+<!-- Data-subject tools -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+  <div class="card-surface panel">
+    <h3>Export a customer's data</h3>
+    <p class="subtle">Collects every stored record for a WhatsApp number into a downloadable JSON file.</p>
+    <form method="POST" action="{{ url_for('admin_compliance.export_subject') }}"
+          style="display:flex;gap:10px;align-items:end">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label style="flex:1">
+        <span class="subtle">WhatsApp number</span>
+        <input class="inp" type="text" name="wa_number" required maxlength="32"
+               placeholder="e.g. 919812345678" style="width:100%" />
+      </label>
+      <button class="btn primary" type="submit"><i class="bi bi-download"></i> Export</button>
+    </form>
+  </div>
+
+  <div class="card-surface panel">
+    <h3>Erase a customer's PII</h3>
+    <p class="subtle">Redacts names, notes &amp; conversations and withdraws consent. Financial records are retained.</p>
+    <form method="POST" action="{{ url_for('admin_compliance.erase_subject') }}"
+          onsubmit="return confirm('Redact all PII for this customer? Orders/payments are kept but personal data is erased.');"
+          style="display:flex;gap:10px;align-items:end">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label style="flex:1">
+        <span class="subtle">WhatsApp number</span>
+        <input class="inp" type="text" name="wa_number" required maxlength="32"
+               placeholder="e.g. 919812345678" style="width:100%" />
+      </label>
+      <button class="btn" type="submit" style="background:#b91c1c;color:#fff;border:none">
+        <i class="bi bi-trash"></i> Erase
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Recent data requests -->
+<div class="card-surface panel" style="margin-bottom:16px">
+  <h3>Recent data-subject requests <span class="subtle">· {{ requests|length }}</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr><th>#</th><th>Kind</th><th>Subject</th><th>Status</th><th>By</th><th>Created</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in requests %}
+      <tr>
+        <td class="mono">{{ r.id }}</td>
+        <td>
+          {% if r.kind == 'export' %}<span class="pill info">export</span>
+          {% else %}<span class="pill warn">erasure</span>{% endif %}
+        </td>
+        <td class="mono">{{ r.subject_wa_number }}</td>
+        <td>
+          {% if r.status == 'completed' %}<span class="pill good">completed</span>
+          {% elif r.status == 'failed' %}<span class="pill bad">failed</span>
+          {% else %}<span class="pill warn">{{ r.status }}</span>{% endif %}
+        </td>
+        <td class="subtle">{{ r.requested_by or '—' }}</td>
+        <td class="subtle">{{ (r.created_at or '')[:16].replace('T',' ') or '—' }}</td>
+        <td style="white-space:nowrap">
+          {% if r.kind == 'export' and r.result_path %}
+          <a class="btn" href="{{ url_for('admin_compliance.download_export', req_id=r.id) }}">
+            <i class="bi bi-download"></i> Download
+          </a>
+          {% else %}<span class="subtle">—</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7"><div class="empty"><i class="bi bi-inbox"></i>No data-subject requests yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<!-- Recent PII access -->
+<div class="card-surface panel">
+  <h3>Recent PII access <span class="subtle">· {{ pii_access|length }}</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr><th>Actor</th><th>Subject</th><th>Action</th><th>IP</th><th>When</th></tr>
+    </thead>
+    <tbody>
+      {% for a in pii_access %}
+      <tr>
+        <td>{{ a.actor }}</td>
+        <td class="mono">{{ a.subject_wa_number }}</td>
+        <td><span class="pill info">{{ a.action }}</span></td>
+        <td class="subtle">{{ a.ip or '—' }}</td>
+        <td class="subtle">{{ (a.created_at or '')[:16].replace('T',' ') or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5"><div class="empty"><i class="bi bi-shield"></i>No PII access recorded yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{% endblock %}

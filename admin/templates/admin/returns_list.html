@@ -1,0 +1,76 @@
+{% extends "admin/base.html" %}
+{% block title %}Returns{% endblock %}
+{% block heading %}Returns &amp; Refunds{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<form class="toolbar" method="GET" action="{{ url_for('admin_returns.returns_list') }}">
+  <select class="field" name="status" style="width:auto">
+    <option value="">All statuses</option>
+    {% for s in statuses %}
+    <option value="{{ s }}" {{ 'selected' if status==s }}>{{ s|title }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
+  <a class="btn ghost" href="{{ url_for('admin_returns.returns_list') }}"><i class="bi bi-x-circle"></i> Reset</a>
+</form>
+
+<div class="card-surface panel">
+  <h3>Return Requests <span class="subtle">· {{ total }} total</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>RMA #</th><th>Order</th><th>Customer</th><th>Kind</th>
+        <th>Status</th><th class="tabular">Refund</th><th>Reason</th><th>Created</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in returns %}
+      <tr>
+        <td class="mono"><a href="{{ url_for('admin_returns.return_detail', rid=r.id) }}">{{ r.rma_number }}</a></td>
+        <td class="mono">#{{ r.order_id }}</td>
+        <td class="mono">{{ r.wa_number or '—' }}</td>
+        <td>{{ r.kind|title }}</td>
+        <td>
+          <span class="pill {{ 'good' if r.status=='completed' else 'bad' if r.status=='rejected' else 'info' if r.status=='approved' else 'warn' }}">{{ r.status|title }}</span>
+        </td>
+        <td class="tabular">{{ '%.2f'|format(r.refund_amount) }}</td>
+        <td title="{{ r.reason }}">{{ (r.reason or '—')[:40] }}</td>
+        <td class="subtle">{{ (r.created_at or '')[:16].replace('T',' ') }}</td>
+        <td><a class="pill info" href="{{ url_for('admin_returns.return_detail', rid=r.id) }}">Open</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9"><div class="empty"><i class="bi bi-arrow-return-left"></i>No return requests match these filters.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% if total_pages > 1 %}
+  <div class="toolbar" style="margin-top:16px;justify-content:space-between">
+    <span class="subtle">Showing {{ showing_from }}–{{ showing_to }} of {{ total }}</span>
+    <span>
+      {% set base_args = dict(request.args) %}
+      {% if page > 1 %}
+      <a class="btn ghost" href="{{ url_for('admin_returns.returns_list', **dict(base_args, page=page-1)) }}"><i class="bi bi-chevron-left"></i> Prev</a>
+      {% endif %}
+      <span class="subtle" style="margin:0 10px">Page {{ page }} / {{ total_pages }}</span>
+      {% if page < total_pages %}
+      <a class="btn ghost" href="{{ url_for('admin_returns.returns_list', **dict(base_args, page=page+1)) }}">Next <i class="bi bi-chevron-right"></i></a>
+      {% endif %}
+    </span>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

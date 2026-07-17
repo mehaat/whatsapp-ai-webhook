@@ -69,8 +69,146 @@ services:
       # Stable session-signing secret (recommended). Generate a random value.
       - key: ADMIN_SECRET_KEY
         sync: false
-      # Dashboard SQLite lives on the mounted persistent disk by default.
-      - key: ADMIN_DB_PATH
-        value: /var/data/mehaat_admin.db
+      # v10.1: ADMIN_DB_PATH intentionally unset so the dashboard shares the ONE
+      # unified /var/data/mehaat.db (the migration merges any legacy admin DB).
       - key: ADMIN_SESSION_TIMEOUT_MIN
         value: "60"
+      # --- v6.0 Enterprise Commerce (optional; safe defaults) ---
+      # Commerce orders/payments/tracking persist via DATABASE_URL (the SQLite
+      # file on the mounted disk above, or a Postgres URL). Invoices are written
+      # to the persistent disk so they survive restarts.
+      - key: COMMERCE_ENABLED
+        value: "true"
+      - key: INVOICE_OUTPUT_DIR
+        value: /var/data/invoices
+      - key: DEFAULT_CURRENCY
+        value: "INR"
+      - key: DELIVERY_ESTIMATE
+        value: "3-5 Days"
+      - key: AUTO_DRAFT_ORDER
+        value: "true"
+      - key: STOCK_VALIDATION_ENABLED
+        value: "false"
+      # New-order admin alert recipient (E.164 digits, no +).
+      - key: ADMIN_WHATSAPP_NUMBER
+        sync: false
+      # Business identity printed on invoices.
+      - key: BUSINESS_NAME
+        value: "ME-HAAT Fashion"
+      - key: BUSINESS_ADDRESS
+        sync: false
+      - key: BUSINESS_GSTIN
+        sync: false
+      - key: BUSINESS_PHONE
+        sync: false
+      - key: BUSINESS_EMAIL
+        sync: false
+      # Payments: manual_upi works with no gateway account; set a provider +
+      # its credentials to enable hosted payment links.
+      - key: PAYMENT_PROVIDER
+        value: "manual_upi"
+      - key: UPI_VPA
+        sync: false
+      - key: UPI_PAYEE_NAME
+        value: "ME-HAAT Fashion"
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: CASHFREE_APP_ID
+        sync: false
+      - key: CASHFREE_SECRET_KEY
+        sync: false
+      - key: PHONEPE_MERCHANT_ID
+        sync: false
+      - key: PHONEPE_SALT_KEY
+        sync: false
+      # JWT signing secret for the programmatic order/tracking API.
+      - key: JWT_SECRET
+        sync: false
+      - key: API_KEY
+        sync: false
+      # --- v6.1 (CRM / RBAC / jobs / inventory reservation) ---
+      - key: JOBS_ENABLED
+        value: "true"
+      - key: JOBS_WORKERS
+        value: "2"
+      - key: INVENTORY_RESERVATION_ENABLED
+        value: "true"
+      - key: INVENTORY_SYNC_ENABLED
+        value: "false"
+      - key: DEFAULT_ADMIN_ROLE
+        value: "staff"
+      # --- v7.0 ---
+      - key: SHIPPING_PROVIDER
+        value: "manual"
+      - key: SHIPROCKET_EMAIL
+        sync: false
+      - key: SHIPROCKET_PASSWORD
+        sync: false
+      - key: DELHIVERY_TOKEN
+        sync: false
+      - key: ADMIN_2FA_ENABLED
+        value: "false"
+      - key: ADMIN_IP_ALLOWLIST
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: METRICS_ENABLED
+        value: "true"
+      # --- v8.0 ---
+      - key: QUEUE_BACKEND
+        value: "inprocess"
+      - key: REDIS_URL
+        sync: false
+      - key: MULTI_TENANT_ENABLED
+        value: "false"
+      - key: DEFAULT_TENANT_SLUG
+        value: "default"
+      - key: DEVELOPER_PORTAL_ENABLED
+        value: "true"
+      - key: DATA_RETENTION_DAYS
+        value: "0"
+      - key: COMPLIANCE_EXPORT_DIR
+        value: /var/data/exports
+      # --- v9.0 ---
+      - key: CACHE_ENABLED
+        value: "true"
+      - key: RECOMMENDATIONS_ENABLED
+        value: "true"
+      - key: VISUAL_SEARCH_ENABLED
+        value: "true"
+      - key: AI_STYLIST_ENABLED
+        value: "true"
+      - key: VISUAL_EMBEDDER
+        value: "histogram"
+      - key: SENTRY_ENVIRONMENT
+        value: "production"
+      # --- v10.0 ---
+      - key: AGENTS_ENABLED
+        value: "true"
+      - key: AGENTS_WHATSAPP
+        value: "false"
+      - key: RAG_ENABLED
+        value: "true"
+      - key: MCP_ENABLED
+        value: "true"
+      - key: VOICE_ENABLED
+        value: "true"
+      - key: APPROVAL_REQUIRED
+        value: "true"
+      # --- v10.1 Stable ---
+      # Absolute sqlite path already set via DATABASE_URL above; UNIFIED_DB_PATH
+      # can override the canonical path explicitly if needed.
+      - key: STRICT_STARTUP
+        value: "false"
+      - key: DEV_MODE
+        value: "false"
+      - key: LOG_DIR
+        value: /var/data/logs

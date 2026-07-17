@@ -1,0 +1,115 @@
+{% extends "admin/base.html" %}
+{% block title %}Approvals{% endblock %}
+{% block heading %}Human Approvals{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="card-surface panel">
+  <h3 style="display:flex;align-items:center;gap:10px">
+    Pending approvals
+    <span class="badge-count" style="position:static;display:inline-flex">{{ pending_count }}</span>
+  </h3>
+  <p class="subtle" style="margin-top:-4px">
+    Sensitive agent/admin actions queued for sign-off. Approving executes the
+    action; both actions require the <strong>manager</strong> role.
+  </p>
+
+  {% if pending %}
+  <div style="overflow-x:auto">
+  <table class="table" style="width:100%">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Action</th>
+        <th>Payload</th>
+        <th>Requested by</th>
+        <th>Created</th>
+        <th style="text-align:right">Decision</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for req in pending %}
+      <tr>
+        <td>{{ req.id }}</td>
+        <td>
+          <strong>{{ req.action }}</strong>
+          <span class="pill {{ 'bad' if req.risk == 'high' else 'warn' }}"
+                style="margin-left:6px">{{ req.risk }}</span>
+          {% if req.reason %}<div class="subtle">{{ req.reason }}</div>{% endif %}
+        </td>
+        <td><pre style="margin:0;max-width:360px;white-space:pre-wrap;overflow-x:auto">{{ req.payload_pretty }}</pre></td>
+        <td>{{ req.requested_by }}</td>
+        <td class="subtle">{{ req.created_at }}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <form method="POST" action="{{ url_for('admin_approvals.approve_request', aid=req.id) }}"
+                style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button class="btn primary" type="submit"><i class="bi bi-check2"></i> Approve</button>
+          </form>
+          <form method="POST" action="{{ url_for('admin_approvals.reject_request', aid=req.id) }}"
+                style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button class="btn" type="submit"><i class="bi bi-x-lg"></i> Reject</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="pill good" style="display:block;padding:12px 14px">
+    <i class="bi bi-check-circle"></i> No pending approvals.
+  </div>
+  {% endif %}
+</div>
+
+<div class="card-surface panel" style="margin-top:18px">
+  <h3>Recent decisions</h3>
+  {% if history %}
+  <div style="overflow-x:auto">
+  <table class="table" style="width:100%">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Action</th>
+        <th>Status</th>
+        <th>Requested by</th>
+        <th>Decided by</th>
+        <th>Decided at</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for req in history %}
+      <tr>
+        <td>{{ req.id }}</td>
+        <td>{{ req.action }}</td>
+        <td>
+          <span class="pill {{ 'good' if req.status == 'executed' else 'bad' if req.status in ['rejected','failed'] else 'warn' }}">
+            {{ req.status }}
+          </span>
+        </td>
+        <td>{{ req.requested_by }}</td>
+        <td>{{ req.decided_by or '—' }}</td>
+        <td class="subtle">{{ req.decided_at or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="subtle">No decisions yet.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

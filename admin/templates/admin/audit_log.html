@@ -1,0 +1,93 @@
+{% extends "admin/base.html" %}
+{% block title %}Audit Log{% endblock %}
+{% block heading %}Audit Log{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar" style="margin-bottom:16px;display:flex;gap:12px;align-items:end;flex-wrap:wrap">
+  <form method="GET" action="{{ url_for('admin_compliance.audit_log') }}"
+        style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+    <label>
+      <span class="subtle">Actor</span>
+      <input class="inp" type="text" name="actor" value="{{ f_actor }}" maxlength="128"
+             placeholder="actor" />
+    </label>
+    <label>
+      <span class="subtle">Action</span>
+      <input class="inp" type="text" name="action" value="{{ f_action }}" maxlength="64"
+             placeholder="e.g. order.status" />
+    </label>
+    <button class="btn primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
+    <a class="btn" href="{{ url_for('admin_compliance.audit_log') }}">Reset</a>
+  </form>
+  <span class="spacer" style="flex:1"></span>
+  <div style="display:flex;gap:8px">
+    <a class="btn" href="{{ url_for('admin_compliance.audit_log', actor=f_actor, action=f_action, export='csv') }}"><i class="bi bi-filetype-csv"></i> CSV</a>
+    <a class="btn" href="{{ url_for('admin_compliance.audit_log', actor=f_actor, action=f_action, export='xlsx') }}"><i class="bi bi-file-earmark-excel"></i> XLSX</a>
+    <a class="btn" href="{{ url_for('admin_compliance.audit_log', actor=f_actor, action=f_action, export='pdf') }}"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+    <a class="btn" href="{{ url_for('admin_compliance.compliance_home') }}"><i class="bi bi-shield-check"></i> Compliance</a>
+  </div>
+</div>
+
+<div class="card-surface panel">
+  <h3>Entries <span class="subtle">· {{ total }} total · page {{ page }}</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>#</th><th>When</th><th>Actor</th><th>Action</th>
+        <th>Entity</th><th>Entity ID</th><th>Detail</th><th>IP</th><th>Row hash</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="mono">{{ r.id }}</td>
+        <td class="subtle">{{ (r.created_at or '')[:19].replace('T',' ') or '—' }}</td>
+        <td>{{ r.actor }}</td>
+        <td><span class="pill info">{{ r.action }}</span></td>
+        <td class="subtle">{{ r.entity or '—' }}</td>
+        <td class="mono">{{ r.entity_id or '—' }}</td>
+        <td>{{ r.detail or '' }}</td>
+        <td class="subtle">{{ r.ip or '—' }}</td>
+        <td class="mono subtle" title="{{ r.row_hash or '' }}">
+          {% if r.row_hash %}{{ r.row_hash[:12] }}…{% else %}<span class="pill warn">legacy</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9"><div class="empty"><i class="bi bi-inbox"></i>No audit entries match.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <div style="display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:14px">
+    <div>
+      {% if has_prev %}
+      <a class="btn" href="{{ url_for('admin_compliance.audit_log', actor=f_actor, action=f_action, page=page-1) }}">
+        <i class="bi bi-chevron-left"></i> Prev
+      </a>
+      {% endif %}
+    </div>
+    <span class="subtle">Page {{ page }}</span>
+    <div>
+      {% if has_next %}
+      <a class="btn" href="{{ url_for('admin_compliance.audit_log', actor=f_actor, action=f_action, page=page+1) }}">
+        Next <i class="bi bi-chevron-right"></i>
+      </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

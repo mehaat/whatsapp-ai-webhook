@@ -20,9 +20,12 @@ import contextvars
 import functools
 import json
 import logging
+import logging.handlers
+import os
+import threading
 import time
 import uuid
-from typing import Callable
+from typing import Callable, Optional
 
 _SENSITIVE_SUBSTRINGS = ("token", "secret", "api_key", "apikey", "password", "authorization")
 
@@ -123,6 +126,137 @@ def configure_logging(name: str = "mehaat_bot") -> logging.Logger:
 
 
 logger = configure_logging()
+
+
+# --------------------------------------------------------------------------- #
+# v10.1: per-component structured log files
+# --------------------------------------------------------------------------- #
+# Each subsystem can obtain a child logger that writes to its own rotating file
+# under LOG_DIR, while still propagating to the shared singleton (which also
+# fans records into a combined system.log). Everything here is lazy and guarded:
+# on a read-only filesystem we silently skip file handlers and keep console
+# logging, so importing this module can never fail.
+
+#: Component log files supported out of the box.
+COMPONENT_LOG_FILES = (
+    "shopify",
+    "oauth",
+    "dashboard",
+    "ai",
+    "database",
+    "whatsapp",
+    "system",
+)
+
+_LOG_MAX_BYTES = 2 * 1024 * 1024  # ~2MB per file before rotation
+_LOG_BACKUP_COUNT = 3
+
+_component_lock = threading.Lock()
+_system_log_attached = False
+
+
+def _log_dir() -> str:
+    """Return the configured log directory (env LOG_DIR, default ``logs/``)."""
+    return os.environ.get("LOG_DIR", "logs").strip() or "logs"
+
+
+def _build_formatter(log_format: str) -> logging.Formatter:
+    """Return a formatter matching the existing text/JSON conventions."""
+    if log_format == "json":
+        return _JsonFormatter()
+    return logging.Formatter(
+        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+
+def _make_rotating_file_handler(filename: str) -> "Optional[logging.Handler]":
+    """Build a guarded RotatingFileHandler; return None if the FS is unwritable.
+
+    Never raises: a read-only or missing LOG_DIR yields ``None`` so callers fall
+    back to console-only logging instead of crashing.
+    """
+    try:
+        directory = _log_dir()
+        os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, filename)
+        log_format, level = _resolve_settings()
+        handler = logging.handlers.RotatingFileHandler(
+            path,
+            maxBytes=_LOG_MAX_BYTES,
+            backupCount=_LOG_BACKUP_COUNT,
+            encoding="utf-8",
+            delay=True,
+        )
+        handler.setLevel(level)
+        handler.setFormatter(_build_formatter(log_format))
+        handler.addFilter(_RequestContextFilter())
+        return handler
+    except Exception:  # noqa: BLE001 - never let logging setup crash the app
+        return None
+
+
+def _ensure_system_log_handler() -> None:
+    """Attach a combined ``system.log`` rotating handler to the singleton once.
+
+    So every record that reaches the shared ``logger`` (including component
+    records that propagate up) also lands in a single ``system.log`` file.
+    """
+    global _system_log_attached
+    if _system_log_attached:
+        return
+    with _component_lock:
+        if _system_log_attached:
+            return
+        # Guard against double-adding if this runs more than once.
+        for existing in logger.handlers:
+            if getattr(existing, "_mehaat_system_log", False):
+                _system_log_attached = True
+                return
+        handler = _make_rotating_file_handler("system.log")
+        if handler is not None:
+            handler._mehaat_system_log = True  # type: ignore[attr-defined]
+            logger.addHandler(handler)
+        # Mark attached regardless: if the FS is read-only we stay console-only
+        # and never retry-thrash on every call.
+        _system_log_attached = True
+
+
+def get_component_logger(name: str) -> logging.Logger:
+    """Return a child logger that writes to its own rotating ``<name>.log``.
+
+    Args:
+        name: Component name (e.g. ``"shopify"``, ``"oauth"``, ``"ai"``). Unknown
+            names are still accepted and get their own file.
+
+    Returns:
+        A ``logging.Logger`` whose records also propagate to the shared singleton
+        (and thus into the combined ``system.log``). The ``"system"`` component
+        maps to the singleton itself. Never raises; on a read-only filesystem the
+        logger simply has no file handler and logs to console only.
+    """
+    normalised = (name or "system").strip().lower() or "system"
+
+    # Always make sure the combined system.log exists on the singleton.
+    _ensure_system_log_handler()
+
+    if normalised == "system":
+        return logger
+
+    full_name = f"mehaat_bot.{normalised}"
+    with _component_lock:
+        child = logging.getLogger(full_name)
+        if getattr(child, "_mehaat_component_ready", False):
+            return child
+        _, level = _resolve_settings()
+        child.setLevel(level)
+        handler = _make_rotating_file_handler(f"{normalised}.log")
+        if handler is not None:
+            child.addHandler(handler)
+        # Propagate to the singleton so records also reach console + system.log.
+        child.propagate = True
+        child._mehaat_component_ready = True  # type: ignore[attr-defined]
+        return child
 
 
 def redact(value: str, keep: int = 4) -> str:

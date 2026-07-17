@@ -1,0 +1,18 @@
+# ME-HAAT Fashion AI Bot v8.0 — Grafana datasource provisioning.
+# Auto-loaded by Grafana on startup from
+# /etc/grafana/provisioning/datasources/ (see docker-compose volume mount).
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    # "prometheus" matches the docker-compose service name.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s

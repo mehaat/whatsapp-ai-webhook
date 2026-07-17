@@ -1,0 +1,60 @@
+{% extends "admin/base.html" %}
+{% block title %}Two-Factor Setup{% endblock %}
+{% block heading %}Two-Factor Authentication{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="card-surface panel" style="max-width:560px">
+{% if db_user is none %}
+  <h3><i class="bi bi-info-circle"></i> 2FA applies to database users</h3>
+  <p class="subtle">You are signed in as the built-in environment owner, which has
+  no database record. Two-factor authentication can only be enrolled for named
+  users created under Admin Users.</p>
+  <a class="btn ghost" href="{{ url_for('admin_security.security_overview') }}">
+    <i class="bi bi-arrow-left"></i> Back to Security
+  </a>
+
+{% elif enabled %}
+  <h3><i class="bi bi-shield-check"></i> 2FA is enabled</h3>
+  <p class="subtle">Your account <span class="mono">{{ db_user.username }}</span> is
+  protected by an authenticator app. Disable it below if you need to re-enrol.</p>
+  <form method="POST" action="{{ url_for('admin_security.twofa_disable') }}"
+        onsubmit="return confirm('Disable two-factor authentication?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button class="btn danger" type="submit"><i class="bi bi-shield-slash"></i> Disable 2FA</button>
+  </form>
+
+{% else %}
+  <h3><i class="bi bi-qr-code"></i> Set up an authenticator</h3>
+  <ol class="subtle" style="padding-left:18px">
+    <li>Open Google Authenticator (or any TOTP app).</li>
+    <li>Scan the QR code below, or enter the secret key manually.</li>
+    <li>Enter the 6-digit code the app shows to confirm.</li>
+  </ol>
+  {% if qr %}
+  <div style="text-align:center;margin:14px 0">
+    <img src="{{ qr }}" alt="2FA QR code" style="width:200px;height:200px;border:1px solid var(--line,#ddd);border-radius:8px" />
+  </div>
+  {% endif %}
+  {% if secret %}
+  <p>Secret key: <code class="mono" style="user-select:all">{{ secret }}</code></p>
+  {% endif %}
+  <form method="POST" action="{{ url_for('admin_security.twofa_enable') }}" class="toolbar" style="margin-top:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input class="field" type="text" name="code" inputmode="numeric" autocomplete="one-time-code"
+           pattern="[0-9]*" maxlength="8" placeholder="123456" required style="width:auto" />
+    <button class="btn primary" type="submit"><i class="bi bi-check2-circle"></i> Verify &amp; enable</button>
+  </form>
+{% endif %}
+</div>
+{% endblock %}

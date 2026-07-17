@@ -1,0 +1,51 @@
+{% extends "admin/base.html" %}
+{% block title %}Settings{% endblock %}
+{% block heading %}Settings{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="card-surface panel" style="max-width:720px">
+  <h3>Runtime settings <span class="subtle">· DB overrides</span></h3>
+  <p class="subtle" style="margin-top:-4px">
+    These values override the environment-variable boot defaults. Leave a field
+    blank to fall back to the env default. Saving requires the <strong>admin</strong> role.
+  </p>
+
+  <form method="POST" action="{{ url_for('admin_settings.settings_save') }}" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+    {% for f in fields %}
+    <label for="{{ f.key }}" style="margin-top:16px">{{ f.label }}
+      <span class="subtle">· {{ f.help }}</span>
+    </label>
+    {% if f.type == 'bool' %}
+    <label style="display:flex;align-items:center;gap:8px;margin-top:4px">
+      <input type="checkbox" id="{{ f.key }}" name="{{ f.key }}"
+             {{ 'checked' if f.value in ['true','1','on','yes',True] }} />
+      Enabled
+    </label>
+    {% elif f.type == 'number' %}
+    <input class="field" id="{{ f.key }}" name="{{ f.key }}" type="number" step="any"
+           value="{{ f.value }}" />
+    {% else %}
+    <input class="field" id="{{ f.key }}" name="{{ f.key }}" type="text"
+           value="{{ f.value }}" />
+    {% endif %}
+    {% endfor %}
+
+    <div class="toolbar" style="margin-top:24px">
+      <button class="btn primary" type="submit"><i class="bi bi-check2"></i> Save settings</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

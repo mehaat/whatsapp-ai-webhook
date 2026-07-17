@@ -1,0 +1,15 @@
+apiVersion: v2
+name: mehaat
+description: ME-HAAT Fashion AI Bot v9.0 — WhatsApp/Shopify Flask commerce bot with Gunicorn web, Celery worker + beat, Redis/Postgres options.
+type: application
+version: 0.1.0
+appVersion: "9.0"
+keywords:
+  - flask
+  - whatsapp
+  - shopify
+  - celery
+  - fashion-ai
+home: https://mehaatfaishon.com
+maintainers:
+  - name: ME-HAAT Platform Team

@@ -1,0 +1,141 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ customer.name or wa_number }}{% endblock %}
+{% block heading %}Customer Profile{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="toolbar">
+  <a class="btn ghost" href="{{ url_for('admin_crm.crm_list') }}"><i class="bi bi-arrow-left"></i> Back to customers</a>
+  <a class="btn ghost" href="{{ url_for('admin.chat', wa_number=wa_number) }}"><i class="bi bi-chat-dots"></i> Open Chat</a>
+  <span class="spacer" style="flex:1"></span>
+  <span class="pill {{ 'good' if customer.segment=='vip' else 'info' if customer.segment=='repeat' else 'warn' }}">{{ (customer.segment or 'new')|title }}</span>
+</div>
+
+<div class="stat-grid" style="margin-bottom:16px">
+  <div class="stat">
+    <div class="icon bg-blue"><i class="bi bi-person-badge"></i></div>
+    <div class="value">{{ customer.name or 'Unknown' }}</div>
+    <div class="label mono">{{ wa_number }}</div>
+  </div>
+  <div class="stat">
+    <div class="icon bg-aqua"><i class="bi bi-cash-stack"></i></div>
+    <div class="value">₹ {{ '%.2f'|format(customer.lifetime_value) }}</div>
+    <div class="label">Lifetime Value</div>
+  </div>
+  <div class="stat">
+    <div class="icon bg-violet"><i class="bi bi-bag-check"></i></div>
+    <div class="value">{{ customer.orders_count }}</div>
+    <div class="label">Orders</div>
+  </div>
+  <div class="stat">
+    <div class="icon bg-amber"><i class="bi bi-graph-up"></i></div>
+    <div class="value">₹ {{ '%.2f'|format(customer.avg_order_value) }}</div>
+    <div class="label">Avg Order Value</div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div>
+    <!-- Order history -->
+    <div class="card-surface panel">
+      <h3>Order History</h3>
+      <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead>
+          <tr><th>Order #</th><th class="tabular">Amount</th><th>Payment</th><th>Status</th><th>Created</th></tr>
+        </thead>
+        <tbody>
+          {% for o in customer.orders %}
+          <tr>
+            <td class="mono"><a href="{{ url_for('admin_orders.order_detail', order_id=o.id) }}">{{ o.order_number }}</a></td>
+            <td class="tabular">{{ o.currency }} {{ '%.2f'|format(o.total_amount) }}</td>
+            <td><span class="pill {{ 'good' if o.payment_status=='paid' else 'bad' if o.payment_status in ['failed','expired'] else 'warn' }}">{{ o.payment_status|title }}</span></td>
+            <td><span class="pill {{ 'good' if o.status=='delivered' else 'bad' if o.status in ['cancelled','refunded'] else 'info' }}">{{ o.status.replace('_',' ')|title }}</span></td>
+            <td class="subtle">{{ (o.created_at or '')[:16].replace('T',' ') }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5"><div class="empty"><i class="bi bi-box"></i>No orders for this customer.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <div class="subtle" style="margin-top:10px">
+        First order: {{ (customer.first_order_at or '')[:16].replace('T',' ') or '—' }}
+        · Last order: {{ (customer.last_order_at or '')[:16].replace('T',' ') or '—' }}
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="card-surface panel mt">
+      <h3>Notes</h3>
+      <form method="POST" action="{{ url_for('admin_crm.crm_add_note', wa_number=wa_number) }}" style="margin-bottom:14px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <textarea class="field" name="note" rows="3" placeholder="Add a note about this customer…" style="width:100%;margin-bottom:8px"></textarea>
+        <button class="btn primary" type="submit"><i class="bi bi-plus-circle"></i> Add Note</button>
+      </form>
+      {% if customer.notes %}
+      <ul class="timeline">
+        {% for n in customer.notes %}
+        <li>
+          <span class="dot-mark"></span>
+          <div>
+            <div>{{ n.note }}</div>
+            <div class="subtle">{{ n.author }} · {{ (n.created_at or '')[:19].replace('T',' ') }}</div>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="empty"><i class="bi bi-sticky"></i>No notes yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Editors -->
+  <div>
+    <div class="card-surface panel">
+      <h3>Tags</h3>
+      <div style="margin-bottom:10px">
+        {% for t in customer.tags %}<span class="pill info" style="margin:0 4px 4px 0">{{ t }}</span>{% else %}<span class="subtle">No tags</span>{% endfor %}
+      </div>
+      <form method="POST" action="{{ url_for('admin_crm.crm_set_tags', wa_number=wa_number) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input class="field" type="text" name="tags" value="{{ customer.tags|join(', ') }}"
+               placeholder="vip, wholesale, silk…" style="width:100%;margin-bottom:8px" />
+        <div class="subtle" style="margin-bottom:8px">Comma-separated.</div>
+        <button class="btn primary" type="submit" style="width:100%"><i class="bi bi-tags"></i> Save Tags</button>
+      </form>
+    </div>
+
+    <div class="card-surface panel mt">
+      <h3>Segment</h3>
+      <form method="POST" action="{{ url_for('admin_crm.crm_set_segment', wa_number=wa_number) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <select class="field" name="segment" style="width:100%;margin-bottom:8px">
+          {% for s in ['vip','repeat','new'] %}
+          <option value="{{ s }}" {{ 'selected' if customer.segment==s }}>{{ s|title }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn primary" type="submit" style="width:100%"><i class="bi bi-diagram-3"></i> Save Segment</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<style>
+  .timeline { list-style:none; margin:0; padding:0; }
+  .timeline li { display:flex; gap:12px; padding:0 0 16px; position:relative; }
+  .timeline li:not(:last-child)::before { content:""; position:absolute; left:5px; top:14px; bottom:0; width:2px; background:var(--border); }
+  .timeline .dot-mark { width:12px; height:12px; border-radius:50%; background:var(--brand); margin-top:3px; flex:0 0 auto; z-index:1; }
+</style>
+{% endblock %}

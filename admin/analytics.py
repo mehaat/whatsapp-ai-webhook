@@ -77,9 +77,9 @@ def dashboard_stats() -> Dict[str, int]:
     """Return the headline card metrics for the dashboard home."""
     today_lo, _ = range_bounds("today")
     with get_conn() as conn:
-        total_customers = conn.execute("SELECT COUNT(*) c FROM customers").fetchone()["c"]
+        total_customers = conn.execute("SELECT COUNT(*) c FROM dash_customers").fetchone()["c"]
         total_conversations = conn.execute(
-            "SELECT COUNT(*) c FROM conversations"
+            "SELECT COUNT(*) c FROM dash_conversations"
         ).fetchone()["c"]
         todays_messages = conn.execute(
             "SELECT COUNT(*) c FROM messages WHERE created_at >= ?", (today_lo,)
@@ -89,9 +89,9 @@ def dashboard_stats() -> Dict[str, int]:
         ).fetchone()["c"]
         ai_replies = conn.execute("SELECT COUNT(*) c FROM ai_history").fetchone()["c"]
         unread = conn.execute(
-            "SELECT COALESCE(SUM(unread_count),0) c FROM conversations"
+            "SELECT COALESCE(SUM(unread_count),0) c FROM dash_conversations"
         ).fetchone()["c"]
-        orders = conn.execute("SELECT COUNT(*) c FROM orders").fetchone()["c"]
+        orders = conn.execute("SELECT COUNT(*) c FROM dash_orders").fetchone()["c"]
     return {
         "total_customers": int(total_customers),
         "todays_messages": int(todays_messages),
@@ -135,7 +135,7 @@ def top_customers(limit: int = 5) -> List[Dict[str, Any]]:
         rows = conn.execute(
             "SELECT c.wa_number, c.profile_name, "
             "(SELECT COUNT(*) FROM messages m WHERE m.wa_number = c.wa_number) msgs "
-            "FROM conversations c ORDER BY msgs DESC LIMIT ?",
+            "FROM dash_conversations c ORDER BY msgs DESC LIMIT ?",
             (limit,),
         ).fetchall()
     return [
@@ -181,7 +181,7 @@ def inbox(search: str = "", only_unread: bool = False, limit: int = 200) -> List
         rows = conn.execute(
             f"SELECT wa_number, profile_name, last_message, last_direction, "
             f"message_count, unread_count, status, last_message_at "
-            f"FROM conversations {clause} ORDER BY last_message_at DESC LIMIT ?",
+            f"FROM dash_conversations {clause} ORDER BY last_message_at DESC LIMIT ?",
             (*params, limit),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -191,10 +191,10 @@ def chat_history(wa_number: str, search: str = "") -> Dict[str, Any]:
     """Return the full message timeline for a customer, plus their profile."""
     with get_conn() as conn:
         customer = conn.execute(
-            "SELECT * FROM customers WHERE wa_number = ?", (wa_number,)
+            "SELECT * FROM dash_customers WHERE wa_number = ?", (wa_number,)
         ).fetchone()
         convo = conn.execute(
-            "SELECT * FROM conversations WHERE wa_number = ?", (wa_number,)
+            "SELECT * FROM dash_conversations WHERE wa_number = ?", (wa_number,)
         ).fetchone()
         msg_where = ["wa_number = ?"]
         params: List[Any] = [wa_number]
@@ -278,7 +278,7 @@ def analytics_summary(period: str = "", start: str = "", end: str = "") -> Dict[
         products = conn.execute(
             f"SELECT COUNT(*) c FROM product_sends {mclause}", tuple(mparams)
         ).fetchone()["c"]
-        orders = conn.execute("SELECT COUNT(*) c FROM orders").fetchone()["c"]
+        orders = conn.execute("SELECT COUNT(*) c FROM dash_orders").fetchone()["c"]
         active_customers = conn.execute(
             f"SELECT COUNT(DISTINCT wa_number) c FROM messages {mclause}", tuple(mparams)
         ).fetchone()["c"]
@@ -323,7 +323,7 @@ def list_customers(search: str = "", limit: int = 200) -> List[Dict[str, Any]]:
             f"SELECT c.wa_number, c.profile_name, c.language, c.email, c.tags, "
             f"c.first_seen_at, c.last_seen_at, "
             f"(SELECT COUNT(*) FROM messages m WHERE m.wa_number = c.wa_number) msgs "
-            f"FROM customers c {clause} ORDER BY c.last_seen_at DESC LIMIT ?",
+            f"FROM dash_customers c {clause} ORDER BY c.last_seen_at DESC LIMIT ?",
             (*params, limit),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -333,7 +333,7 @@ def customer_detail(wa_number: str) -> Dict[str, Any]:
     """Return a full customer profile: info, counts, products, recent orders."""
     with get_conn() as conn:
         customer = conn.execute(
-            "SELECT * FROM customers WHERE wa_number = ?", (wa_number,)
+            "SELECT * FROM dash_customers WHERE wa_number = ?", (wa_number,)
         ).fetchone()
         msg_count = conn.execute(
             "SELECT COUNT(*) c FROM messages WHERE wa_number = ?", (wa_number,)
@@ -345,7 +345,7 @@ def customer_detail(wa_number: str) -> Dict[str, Any]:
         ).fetchall()
         orders = conn.execute(
             "SELECT order_name, financial_status, fulfillment_status, total_price, "
-            "currency, looked_up_at FROM orders WHERE wa_number = ? OR phone = ? "
+            "currency, looked_up_at FROM dash_orders WHERE wa_number = ? OR phone = ? "
             "ORDER BY id DESC LIMIT 25",
             (wa_number, wa_number),
         ).fetchall()
@@ -362,7 +362,7 @@ def global_search(query: str, limit: int = 25) -> Dict[str, List[Dict[str, Any]]
     like = f"%{query}%"
     with get_conn() as conn:
         customers = conn.execute(
-            "SELECT wa_number, profile_name, email FROM customers "
+            "SELECT wa_number, profile_name, email FROM dash_customers "
             "WHERE wa_number LIKE ? OR profile_name LIKE ? OR email LIKE ? LIMIT ?",
             (like, like, like, limit),
         ).fetchall()
@@ -377,7 +377,7 @@ def global_search(query: str, limit: int = 25) -> Dict[str, List[Dict[str, Any]]
             (like, limit),
         ).fetchall()
         orders = conn.execute(
-            "SELECT order_name, customer_name, total_price, currency FROM orders "
+            "SELECT order_name, customer_name, total_price, currency FROM dash_orders "
             "WHERE order_name LIKE ? OR customer_name LIKE ? OR email LIKE ? "
             "OR phone LIKE ? ORDER BY id DESC LIMIT ?",
             (like, like, like, like, limit),

@@ -22,6 +22,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    session,
     url_for,
 )
 
@@ -106,17 +107,89 @@ def login() -> Any:
 
     username = clean_query(request.form.get("username", ""), 80)
     password = request.form.get("password", "")
-    if verify_username(username) and verify_password(password):
+
+    # v7.0 security helpers (IP allowlist, login history, optional 2FA).
+    client_ip = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or request.remote_addr
+        or ""
+    )
+    user_agent = request.headers.get("User-Agent", "")[:255]
+    try:
+        from admin import security_ext
+        from config import config as _cfg
+    except Exception:  # noqa: BLE001 - security module optional
+        security_ext, _cfg = None, None
+
+    def _record(success: bool) -> None:
+        if security_ext is not None:
+            security_ext.record_login_event(
+                username, ip=client_ip, user_agent=user_agent, success=success
+            )
+
+    # IP allowlist gate (empty allowlist => allow all).
+    if security_ext is not None and not security_ext.ip_allowed(client_ip):
+        logger.warning("ADMIN | Login blocked by IP allowlist from %s", client_ip)
+        _record(False)
+        return render_template(
+            "admin/login.html", error="Access from your network is not permitted."
+        ), 403
+
+    # The environment ADMIN_USERNAME/ADMIN_PASSWORD is a built-in "owner"
+    # superuser. Additional named users (v6.1 RBAC) are checked against the
+    # admin_users table and carry their own role.
+    env_ok = verify_username(username) and verify_password(password)
+    db_user = None
+    if not env_ok:
+        try:
+            from admin.rbac import verify_login
+
+            db_user = verify_login(username, password)
+        except Exception as exc:  # noqa: BLE001 - RBAC must never break core login
+            logger.error("ADMIN | RBAC login check failed: %s", exc)
+
+    if env_ok or db_user:
+        # Optional TOTP second factor for DB users (env owner is exempt).
+        if db_user and security_ext is not None and _cfg is not None and _cfg.admin_2fa_enabled:
+            info = security_ext.user_totp(db_user["id"]) or {}
+            if info.get("enabled"):
+                code = request.form.get("totp_code", "").strip()
+                secret = _fetch_totp_secret(db_user["id"])
+                if not code or not security_ext.verify_totp(secret, code):
+                    _record(False)
+                    return render_template(
+                        "admin/login.html",
+                        error="Enter your 6-digit authenticator code.",
+                        need_2fa=True,
+                        prefill_username=username,
+                    ), 401
+
         start_session(username)
+        session["admin_role"] = "owner" if env_ok else db_user["role"]
         tracker.record_login(username)
-        logger.info("ADMIN | Login success for %s", username)
+        _record(True)
+        logger.info("ADMIN | Login success for %s (role=%s)", username, session["admin_role"])
         nxt = request.args.get("next", "")
         if nxt.startswith("/admin"):
             return redirect(nxt)
         return redirect(url_for("admin.dashboard"))
 
+    _record(False)
     logger.warning("ADMIN | Login failed for user=%r", username)
     return render_template("admin/login.html", error="Invalid username or password."), 401
+
+
+def _fetch_totp_secret(user_id: int):
+    """Return an admin user's stored TOTP secret (or None)."""
+    try:
+        from database.db import session_scope
+        from database.models import AdminUser
+
+        with session_scope() as session:
+            user = session.get(AdminUser, user_id)
+            return user.totp_secret if user else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @admin_bp.route("/logout", methods=["GET", "POST"])
@@ -366,7 +439,7 @@ def _export_rows(kind: str) -> Tuple[List[Dict[str, Any]], Sequence[str], str]:
             rows = [
                 dict(r)
                 for r in conn.execute(
-                    "SELECT * FROM orders ORDER BY id DESC LIMIT 1000"
+                    "SELECT * FROM dash_orders ORDER BY id DESC LIMIT 1000"
                 ).fetchall()
             ]
     elif kind == "chat":

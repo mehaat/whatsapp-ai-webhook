@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS users (
     last_login_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS customers (
+CREATE TABLE IF NOT EXISTS dash_customers (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     wa_number     TEXT UNIQUE NOT NULL,
     profile_name  TEXT,
@@ -93,9 +93,9 @@ CREATE TABLE IF NOT EXISTS customers (
     first_seen_at TEXT NOT NULL,
     last_seen_at  TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_customers_wa ON customers(wa_number);
+CREATE INDEX IF NOT EXISTS idx_customers_wa ON dash_customers(wa_number);
 
-CREATE TABLE IF NOT EXISTS conversations (
+CREATE TABLE IF NOT EXISTS dash_conversations (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     wa_number       TEXT UNIQUE NOT NULL,
     profile_name    TEXT,
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     started_at      TEXT NOT NULL,
     last_message_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_conversations_last ON conversations(last_message_at);
+CREATE INDEX IF NOT EXISTS idx_conversations_last ON dash_conversations(last_message_at);
 
 CREATE TABLE IF NOT EXISTS messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS product_sends (
 );
 CREATE INDEX IF NOT EXISTS idx_product_sends_created ON product_sends(created_at);
 
-CREATE TABLE IF NOT EXISTS orders (
+CREATE TABLE IF NOT EXISTS dash_orders (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     order_name        TEXT,
     wa_number         TEXT,
@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS orders (
     tracking          TEXT,
     looked_up_at      TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_orders_name ON orders(order_name);
+CREATE INDEX IF NOT EXISTS idx_orders_name ON dash_orders(order_name);
 """
 
 

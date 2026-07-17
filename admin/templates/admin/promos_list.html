@@ -1,0 +1,77 @@
+{% extends "admin/base.html" %}
+{% block title %}Coupons{% endblock %}
+{% block heading %}Coupons &amp; Discounts{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<form class="toolbar" method="GET" action="{{ url_for('admin_promos.coupons_list') }}">
+  <select class="field" name="active" style="width:auto" onchange="this.form.submit()">
+    <option value="" {{ 'selected' if active_filter=='' }}>All coupons</option>
+    <option value="1" {{ 'selected' if active_filter in ['1','active','true'] }}>Active only</option>
+    <option value="0" {{ 'selected' if active_filter in ['0','inactive','false'] }}>Inactive only</option>
+  </select>
+  <span class="spacer" style="flex:1"></span>
+  <a class="btn primary" href="{{ url_for('admin_promos.coupon_new') }}"><i class="bi bi-plus-lg"></i> New coupon</a>
+  <a class="btn ghost" href="{{ url_for('admin_promos.giftcards_list') }}"><i class="bi bi-gift"></i> Gift cards</a>
+</form>
+
+<div class="card-surface panel">
+  <h3>Coupons <span class="subtle">· {{ coupons|length }} total</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Code</th><th>Kind</th><th class="tabular">Value</th>
+        <th class="tabular">Min order</th><th class="tabular">Max disc.</th>
+        <th class="tabular">Used</th><th class="tabular">Limit</th>
+        <th class="tabular">Per cust.</th><th>Window</th><th>Status</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in coupons %}
+      <tr>
+        <td class="mono"><a href="{{ url_for('admin_promos.coupon_edit', cid=c.id) }}">{{ c.code }}</a></td>
+        <td>{{ c.kind|title }}</td>
+        <td class="tabular">{{ '%.0f%%'|format(c.value) if c.kind=='percent' else '%.2f'|format(c.value) }}</td>
+        <td class="tabular">{{ '%.2f'|format(c.min_order) }}</td>
+        <td class="tabular">{{ '%.2f'|format(c.max_discount) if c.max_discount is not none else '—' }}</td>
+        <td class="tabular">{{ c.used_count }}</td>
+        <td class="tabular">{{ c.usage_limit if c.usage_limit is not none else '∞' }}</td>
+        <td class="tabular">{{ c.per_customer_limit if c.per_customer_limit is not none else '∞' }}</td>
+        <td class="subtle">
+          {{ (c.starts_at or '')[:10] or '—' }} → {{ (c.expires_at or '')[:10] or '—' }}
+        </td>
+        <td>
+          <span class="pill {{ 'good' if c.active else 'bad' }}">{{ 'Active' if c.active else 'Inactive' }}</span>
+        </td>
+        <td>
+          <div class="toolbar" style="gap:6px">
+            <a class="pill info" href="{{ url_for('admin_promos.coupon_edit', cid=c.id) }}">Edit</a>
+            {% if c.active %}
+            <form method="POST" action="{{ url_for('admin_promos.coupon_deactivate', cid=c.id) }}"
+                  onsubmit="return confirm('Deactivate coupon {{ c.code }}?')" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <button class="pill bad" type="submit" style="border:0;cursor:pointer">Deactivate</button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11"><div class="empty"><i class="bi bi-ticket-perforated"></i>No coupons yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,90 @@
+{% extends "admin/base.html" %}
+{% set is_edit = (mode == 'edit') %}
+{% block title %}{{ 'Edit Store' if is_edit else 'New Store' }}{% endblock %}
+{% block heading %}{{ 'Edit Store' if is_edit else 'New Store' }}{% endblock %}
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-stack">
+    {% for category, message in messages %}
+    <div class="pill {{ 'bad' if category in ['error','danger'] else 'warn' if category=='warning' else 'good' }}"
+         style="display:block;padding:10px 14px;margin-bottom:8px">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+{% if is_edit and tenant.config_json is defined %}
+  {% set config_text = tenant.config_json %}
+{% elif tenant and tenant.config %}
+  {% set config_text = tenant.config | tojson(indent=2) %}
+{% else %}
+  {% set config_text = '' %}
+{% endif %}
+
+<div class="toolbar" style="margin-bottom:16px">
+  <a class="btn ghost" href="{{ url_for('admin_tenants.tenants_list') }}"><i class="bi bi-arrow-left"></i> Back to Stores</a>
+</div>
+
+<div class="card-surface panel" style="max-width:680px">
+  <h3>{{ 'Edit ' + tenant.name if is_edit else 'Create a new store' }}</h3>
+
+  <form method="POST"
+        action="{{ url_for('admin_tenants.tenant_edit', tid=tenant.id) if is_edit else url_for('admin_tenants.tenant_new') }}"
+        autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+    <label for="slug">Slug <span class="subtle">(unique, URL-safe)</span></label>
+    <input class="field" id="slug" name="slug" type="text" required maxlength="64"
+           value="{{ tenant.slug if tenant else '' }}" {{ 'autofocus' if not is_edit }} />
+
+    <label for="name" style="margin-top:14px">Store name</label>
+    <input class="field" id="name" name="name" type="text" required maxlength="255"
+           value="{{ tenant.name if tenant else '' }}" />
+
+    <label for="whatsapp_phone_number_id" style="margin-top:14px">WhatsApp phone number id</label>
+    <input class="field" id="whatsapp_phone_number_id" name="whatsapp_phone_number_id" type="text" maxlength="64"
+           value="{{ tenant.whatsapp_phone_number_id or '' if tenant else '' }}" />
+
+    <label for="shopify_domain" style="margin-top:14px">Shopify domain</label>
+    <input class="field" id="shopify_domain" name="shopify_domain" type="text" maxlength="255"
+           placeholder="your-store.myshopify.com"
+           value="{{ tenant.shopify_domain or '' if tenant else '' }}" />
+
+    <label for="catalog_id" style="margin-top:14px">Catalog id</label>
+    <input class="field" id="catalog_id" name="catalog_id" type="text" maxlength="128"
+           value="{{ tenant.catalog_id or '' if tenant else '' }}" />
+
+    <label for="host" style="margin-top:14px">Host</label>
+    <input class="field" id="host" name="host" type="text" maxlength="255"
+           placeholder="store.example.com"
+           value="{{ tenant.host or '' if tenant else '' }}" />
+
+    <label for="config_json" style="margin-top:14px">Config <span class="subtle">(JSON object; optional)</span></label>
+    <textarea class="field mono" id="config_json" name="config_json" rows="6"
+              placeholder='{"theme": "dark"}'>{{ config_text }}</textarea>
+
+    <div class="toolbar" style="margin-top:22px">
+      <button class="btn primary" type="submit"><i class="bi bi-check2"></i> {{ 'Save changes' if is_edit else 'Create store' }}</button>
+      <a class="btn ghost" href="{{ url_for('admin_tenants.tenants_list') }}">Cancel</a>
+    </div>
+  </form>
+</div>
+
+{% if is_edit %}
+<div class="card-surface panel" style="max-width:680px;margin-top:20px">
+  <h3>{{ 'Active' if tenant.active else 'Disabled' }} store</h3>
+  <p class="subtle">This store is currently
+    {% if tenant.active %}<span class="pill good">Active</span>{% else %}<span class="pill bad">Disabled</span>{% endif %}.
+    Only active stores can be resolved from webhooks and API requests.</p>
+  <form method="POST" action="{{ url_for('admin_tenants.tenant_toggle', tid=tenant.id) }}" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button class="btn {{ 'ghost' if tenant.active else 'primary' }}" type="submit">
+      <i class="bi bi-{{ 'pause-circle' if tenant.active else 'play-circle' }}"></i>
+      {{ 'Deactivate store' if tenant.active else 'Activate store' }}
+    </button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

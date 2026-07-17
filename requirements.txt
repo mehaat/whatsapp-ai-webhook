@@ -1,4 +1,6 @@
-# ME-HAAT Fashion AI Bot v5.1 Production Edition — runtime dependencies
+
+# ME-HAAT Fashion AI Bot v10.1 Stable Edition — runtime dependencies
+# v10.1 includes all v10.0 features plus stability fixes. No additional runtime dependencies are required.
 # Core — unchanged
 Flask==3.0.3
 gunicorn==22.0.0
@@ -20,3 +22,35 @@ psycopg2-binary>=2.9.9
 # imported lazily and guarded, so CSV export still works if either is absent.
 openpyxl>=3.1.2
 reportlab>=4.0.0
+
+# v6.0 Enterprise Commerce additions.
+# qrcode powers the QR code embedded on PDF invoices (Pillow backend).
+qrcode[pil]>=7.4.2
+# PyJWT secures the programmatic order/tracking API (Bearer tokens).
+PyJWT>=2.8.0
+
+# v7.0 additions.
+# pyotp powers admin TOTP two-factor authentication.
+pyotp>=2.9.0
+# alembic enables reviewed, versioned migrations (the app also auto-migrates
+# additively on boot; alembic is for destructive/mature schema changes).
+alembic>=1.13.0
+# Optional error monitoring — only used when SENTRY_DSN is set. Uncomment to
+# enable Sentry; the app degrades gracefully when it is absent.
+# sentry-sdk>=2.0.0
+
+# v8.0 additions — distributed background processing.
+# celery + redis power the Celery/Redis queue backend (QUEUE_BACKEND=celery).
+# With QUEUE_BACKEND=inprocess (default) they are imported lazily and the app
+# runs on the in-process thread queue, so these are effectively optional.
+celery>=5.3.0
+redis>=5.0.0
+
+# v9.0 additions — Advanced AI Commerce (visual product search).
+# numpy powers the offline image-similarity matcher; Pillow decodes the images
+# (Pillow already arrives via qrcode[pil], pinned here explicitly for clarity).
+numpy>=1.26.0
+Pillow>=10.0.0
+# NOTE: payment gateways (Razorpay/Stripe/Cashfree/PhonePe) are integrated via
+# their REST APIs using the existing `requests` dependency — no gateway SDKs
+# are required, keeping the dependency surface small.

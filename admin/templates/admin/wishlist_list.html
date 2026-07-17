@@ -1,0 +1,32 @@
+{% extends "admin/base.html" %}
+{% block title %}Wishlists{% endblock %}
+{% block heading %}Customer Wishlists{% endblock %}
+{% block content %}
+
+<div class="card-surface panel">
+  <h3>Saved Items <span class="subtle">· {{ total }} total</span></h3>
+  <div style="overflow-x:auto">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Customer</th><th>Product</th><th>Retailer ID</th>
+        <th class="tabular">Price</th><th>Saved</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for w in items %}
+      <tr>
+        <td class="mono"><a href="{{ url_for('admin.customer_detail', wa_number=w.wa_number) }}">{{ w.wa_number }}</a></td>
+        <td>{{ w.product_name or '—' }}</td>
+        <td class="mono">{{ w.product_retailer_id }}</td>
+        <td class="tabular">{{ '%.2f'|format(w.price) if w.price is not none else '—' }}</td>
+        <td class="subtle">{{ (w.created_at or '')[:16].replace('T',' ') }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5"><div class="empty"><i class="bi bi-heart"></i>No saved items yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

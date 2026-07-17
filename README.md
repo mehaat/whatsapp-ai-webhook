@@ -92,7 +92,7 @@ Everything from v5.1 is preserved and backward compatible. The whole commerce su
 - **Enterprise data model + automatic migrations** — new `orders`, `order_items`, `payments`, `tracking`, `invoices`, `notifications`, `audit_logs`, `analytics` tables on SQLite **or** PostgreSQL, created and additively migrated on startup (no manual DB steps).
 - **Security** — JWT/API-key auth on the order API, Meta webhook signature verification (v5.1), Shopify HMAC (existing), per-provider payment webhook signature checks, CSRF on admin actions, parameterized SQL throughout.
 - **Tests** — 78 passing, including an end-to-end catalog-order webhook test.
->>>>>>> feature/v10.1-stable
+
 
 ## What's New in v5.1 (Production Edition)
 

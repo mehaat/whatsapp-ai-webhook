@@ -116,7 +116,7 @@ def canonical_sqlite_url() -> str:
     if os.name == "nt":
         return "sqlite:///" + db.as_posix()
 
-    return "sqlite:////" + db.as_posix().lstrip("/") (ME-HAAT Fashion AI Bot v10.2 Production Stable with PostgreSQL Migration)
+   return "sqlite:////" + db.as_posix().lstrip("/")
 
 
 def database_is_sqlite() -> bool:

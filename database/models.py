@@ -888,3 +888,38 @@ class AgentRun(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
     )
+
+
+# --------------------------------------------------------------------------- #
+# Register the admin-dashboard + Shopify-OAuth tables on the same Base so a
+# single ``create_all`` / Alembic autogenerate covers the ENTIRE schema. These
+# were previously raw-SQLite-only tables; they are now first-class ORM models.
+# (Imported at the end so their classes register on Base.metadata whenever
+# ``database.models`` is imported — e.g. by init_db() and alembic/env.py.)
+# --------------------------------------------------------------------------- #
+from database.models_admin import (  # noqa: E402,F401
+    DashAIHistory,
+    DashConversation,
+    DashCustomer,
+    DashMessage,
+    DashOrder,
+    DashProduct,
+    DashProductSend,
+    DashUser,
+    OAuthState,
+    ShopToken,
+)
+
+
+# --------------------------------------------------------------------------- #
+# v10.2: register the real-time Support Console tables on the same Base so a
+# single create_all / Alembic migration covers them (additive; no existing
+# table is modified).
+# --------------------------------------------------------------------------- #
+from database.models_support import (  # noqa: E402,F401
+    AdminMessage,
+    ConversationAssignment,
+    ConversationSettings,
+    InternalNote,
+    MessageStatus,
+)

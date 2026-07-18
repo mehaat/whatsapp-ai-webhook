@@ -70,41 +70,41 @@ def _database_status() -> str:
 # --------------------------------------------------------------------------- #
 
 def _database_probe() -> Dict[str, Any]:
-    """Cheap local database inspection (path/size/integrity/reachability)."""
-    try:
-        from utils.dbpath import (
-            canonical_sqlite_path,
-            database_is_sqlite,
-            database_size_bytes,
-        )
+    """Cheap database inspection (backend/integrity/reachability), backend-aware.
 
-        path = canonical_sqlite_path()
-        size = database_size_bytes()
+    On SQLite this reports the file path/size and a ``PRAGMA quick_check``; on
+    PostgreSQL (Neon/Render) it reports the backend and a ``SELECT 1``
+    reachability check (no file path applies). Fully guarded — never raises.
+    """
+    try:
+        from database.db import backend_name, get_engine, is_sqlite
+        from sqlalchemy import text
+
         info: Dict[str, Any] = {
-            "path": path,
-            "size_bytes": size,
-            "size_mb": round(size / (1024 * 1024), 3),
+            "backend": backend_name(),
             "integrity": "unknown",
             "reachable": False,
         }
-        if database_is_sqlite():
-            import sqlite3
+        if is_sqlite():
+            from utils.dbpath import canonical_sqlite_path, database_size_bytes
 
-            try:
-                conn = sqlite3.connect(path, timeout=2.0)
-                try:
-                    row = conn.execute("PRAGMA quick_check;").fetchone()
-                    info["integrity"] = str(row[0]) if row else "unknown"
-                    info["reachable"] = True
-                finally:
-                    conn.close()
-            except Exception as exc:  # noqa: BLE001
-                info["reachable"] = False
-                info["error"] = str(exc)
+            path = canonical_sqlite_path()
+            size = database_size_bytes()
+            info.update(
+                path=path,
+                size_bytes=size,
+                size_mb=round(size / (1024 * 1024), 3),
+            )
+            with get_engine().connect() as conn:
+                row = conn.exec_driver_sql("PRAGMA quick_check;").fetchone()
+            info["integrity"] = str(row[0]) if row else "unknown"
+            info["reachable"] = True
         else:
-            # Non-sqlite backend (e.g. Postgres): don't open a network conn here.
-            info["integrity"] = "unknown"
-            info["reachable"] = os.path.exists(path)
+            # Server backend: a trivial round-trip is the reachability signal.
+            with get_engine().connect() as conn:
+                conn.execute(text("SELECT 1"))
+            info["integrity"] = "ok"
+            info["reachable"] = True
         return info
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
@@ -125,38 +125,33 @@ def _oauth_probe() -> Dict[str, Any]:
 
     # Best-effort, cheap: most recent installed_at/updated_at if the table exists.
     try:
-        from utils.dbpath import canonical_sqlite_path
-        import sqlite3
+        from sqlalchemy import func
 
-        conn = sqlite3.connect(canonical_sqlite_path(), timeout=2.0)
-        try:
-            row = conn.execute(
-                "SELECT MAX(installed_at) AS i, MAX(updated_at) AS u FROM shop_tokens"
-            ).fetchone()
-            candidates = [v for v in (row[0], row[1]) if row and v is not None]
-            info["last_oauth"] = max(candidates) if candidates else None
-        finally:
-            conn.close()
+        from database.db import session_scope
+        from database.models_admin import ShopToken
+
+        with session_scope() as session:
+            latest_install = session.query(func.max(ShopToken.installed_at)).scalar()
+            latest_update = session.query(func.max(ShopToken.updated_at)).scalar()
+        candidates = [v for v in (latest_install, latest_update) if v is not None]
+        info["last_oauth"] = max(candidates) if candidates else None
     except Exception:  # noqa: BLE001 - table may not exist yet; non-fatal
         info["last_oauth"] = None
     return info
 
 
 def _dashboard_probe() -> Dict[str, Any]:
-    """Confirm the admin dashboard DB is openable and has a dash table."""
+    """Confirm the admin dashboard schema exists on the active backend."""
     try:
-        from utils.dbpath import canonical_sqlite_path
-        import sqlite3
+        from sqlalchemy import inspect
 
-        conn = sqlite3.connect(canonical_sqlite_path(), timeout=2.0)
-        try:
-            row = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' "
-                "AND name LIKE 'dash%' LIMIT 1"
-            ).fetchone()
-            return {"reachable": row is not None}
-        finally:
-            conn.close()
+        from database.db import get_engine
+
+        inspector = inspect(get_engine())
+        reachable = inspector.has_table("dash_conversations") or inspector.has_table(
+            "dash_customers"
+        )
+        return {"reachable": bool(reachable)}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc), "reachable": False}
 

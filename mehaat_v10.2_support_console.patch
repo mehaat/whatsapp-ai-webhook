@@ -1,0 +1,2486 @@
+From 105aca36ada9daf1ec2fea88d1ca904ea6a21ec5 Mon Sep 17 00:00:00 2001
+From: MEHAAT <dev@mehaat.local>
+Date: Sat, 18 Jul 2026 09:42:40 +0000
+Subject: [PATCH] v10.2: Real-time WhatsApp Support Console with manual live
+ reply
+
+Additive upgrade to the admin dashboard: live inbox, WhatsApp-style live chat,
+manual reply (text/image/pdf/voice via Meta media upload), per-conversation
+AI/Manual toggle that gates the bot's auto-reply, conversation assignment,
+admin-only internal notes, message delivery/read status, customer profile,
+Shopify product-card/draft-order, payment-link generation, live stats, browser+
+sound notifications. Polling-based real-time (3s), WhatsApp-Business UI with
+dark/light. New tables via Alembic (conversation_settings, admin_messages,
+conversation_assignments, internal_notes, message_status). No existing feature,
+route, table or API changed. 361 tests pass; verified on SQLite and PostgreSQL.
+---
+ admin/static/support_console.css              | 205 +++++++
+ admin/static/support_console.js               | 403 +++++++++++++
+ admin/support_console.py                      | 553 ++++++++++++++++++
+ admin/support_routes.py                       | 422 +++++++++++++
+ admin/templates/admin/base.html               |   1 +
+ admin/templates/admin/support_console.html    | 156 +++++
+ ...cbe50493ce_v10_2_support_console_tables.py |  94 +++
+ app.py                                        |  25 +
+ database/models.py                            |  14 +
+ database/models_support.py                    | 135 +++++
+ docs/SUPPORT_CONSOLE.md                       |  76 +++
+ whatsapp/support_sender.py                    | 233 ++++++++
+ whatsapp/webhook.py                           |  18 +-
+ 13 files changed, 2334 insertions(+), 1 deletion(-)
+ create mode 100644 admin/static/support_console.css
+ create mode 100644 admin/static/support_console.js
+ create mode 100644 admin/support_console.py
+ create mode 100644 admin/support_routes.py
+ create mode 100644 admin/templates/admin/support_console.html
+ create mode 100644 alembic/versions/46cbe50493ce_v10_2_support_console_tables.py
+ create mode 100644 database/models_support.py
+ create mode 100644 docs/SUPPORT_CONSOLE.md
+ create mode 100644 whatsapp/support_sender.py
+
+diff --git a/admin/static/support_console.css b/admin/static/support_console.css
+new file mode 100644
+index 0000000..7629e59
+--- /dev/null
++++ b/admin/static/support_console.css
+@@ -0,0 +1,205 @@
++/* ==========================================================================
++   support_console.css — v10.2 real-time WhatsApp Support Console
++   WhatsApp-Business-style two-pane console. Light + Dark themes via
++   [data-console-theme]. Scoped under .sc- to avoid clashing with dashboard.css.
++   ========================================================================== */
++
++.sc-root {
++  --sc-bg: #f0f2f5;
++  --sc-panel: #ffffff;
++  --sc-header: #008069;
++  --sc-header-text: #ffffff;
++  --sc-border: #e9edef;
++  --sc-text: #111b21;
++  --sc-muted: #667781;
++  --sc-chat-bg: #efeae2;
++  --sc-bubble-in: #ffffff;
++  --sc-bubble-out: #d9fdd3;
++  --sc-accent: #00a884;
++  --sc-danger: #e5533c;
++  --sc-hover: #f5f6f6;
++  --sc-active: #f0f2f5;
++  --sc-note: #fff3cd;
++  --sc-shadow: 0 1px 2px rgba(11, 20, 26, .12);
++  color: var(--sc-text);
++}
++
++.sc-root[data-console-theme="dark"] {
++  --sc-bg: #111b21;
++  --sc-panel: #111b21;
++  --sc-header: #202c33;
++  --sc-header-text: #e9edef;
++  --sc-border: #2a3942;
++  --sc-text: #e9edef;
++  --sc-muted: #8696a0;
++  --sc-chat-bg: #0b141a;
++  --sc-bubble-in: #202c33;
++  --sc-bubble-out: #005c4b;
++  --sc-accent: #00a884;
++  --sc-hover: #202c33;
++  --sc-active: #2a3942;
++  --sc-note: #3a3320;
++  --sc-shadow: 0 1px 2px rgba(0, 0, 0, .3);
++}
++
++/* Layout ------------------------------------------------------------------ */
++.sc-root {
++  display: grid;
++  grid-template-columns: 340px 1fr 300px;
++  gap: 0;
++  height: calc(100vh - 130px);
++  min-height: 520px;
++  border: 1px solid var(--sc-border);
++  border-radius: 12px;
++  overflow: hidden;
++  background: var(--sc-panel);
++  box-shadow: var(--sc-shadow);
++}
++.sc-root.sc-no-profile { grid-template-columns: 340px 1fr; }
++
++.sc-col { display: flex; flex-direction: column; min-height: 0; background: var(--sc-panel); }
++.sc-col--inbox { border-right: 1px solid var(--sc-border); }
++.sc-col--profile { border-left: 1px solid var(--sc-border); }
++
++/* Stat bar ---------------------------------------------------------------- */
++.sc-stats {
++  grid-column: 1 / -1;
++  display: flex; flex-wrap: wrap; gap: 10px;
++  padding: 10px 14px; background: var(--sc-panel);
++  border-bottom: 1px solid var(--sc-border);
++}
++.sc-stat { display: flex; flex-direction: column; min-width: 96px; padding: 6px 12px; border-radius: 10px; background: var(--sc-bg); }
++.sc-stat b { font-size: 20px; line-height: 1; color: var(--sc-text); }
++.sc-stat span { font-size: 11px; color: var(--sc-muted); margin-top: 3px; text-transform: uppercase; letter-spacing: .4px; }
++.sc-stat--live b { color: var(--sc-accent); }
++.sc-stat--pending b { color: var(--sc-danger); }
++
++/* Inbox ------------------------------------------------------------------- */
++.sc-inbox-head { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--sc-border); }
++.sc-search { flex: 1; border: 1px solid var(--sc-border); background: var(--sc-bg); border-radius: 20px; padding: 8px 14px; color: var(--sc-text); font-size: 14px; outline: none; }
++.sc-icon-btn { border: none; background: transparent; color: var(--sc-muted); cursor: pointer; font-size: 18px; padding: 6px 8px; border-radius: 8px; }
++.sc-icon-btn:hover { background: var(--sc-hover); color: var(--sc-text); }
++
++.sc-conv-list { flex: 1; overflow-y: auto; }
++.sc-conv {
++  display: flex; gap: 12px; padding: 12px 14px; cursor: pointer;
++  border-bottom: 1px solid var(--sc-border); position: relative; animation: sc-fade .18s ease;
++}
++.sc-conv:hover { background: var(--sc-hover); }
++.sc-conv.active { background: var(--sc-active); }
++.sc-avatar {
++  width: 44px; height: 44px; border-radius: 50%; flex: 0 0 44px;
++  display: grid; place-items: center; font-weight: 600; color: #fff;
++  background: linear-gradient(135deg, #00a884, #008069);
++}
++.sc-conv-body { flex: 1; min-width: 0; }
++.sc-conv-top { display: flex; justify-content: space-between; gap: 8px; }
++.sc-conv-name { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++.sc-conv-time { font-size: 11px; color: var(--sc-muted); flex: 0 0 auto; }
++.sc-conv-bottom { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-top: 2px; }
++.sc-conv-msg { font-size: 13px; color: var(--sc-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++.sc-badges { display: flex; gap: 5px; align-items: center; flex: 0 0 auto; }
++.sc-unread { background: var(--sc-accent); color: #fff; border-radius: 12px; font-size: 11px; min-width: 18px; height: 18px; padding: 0 5px; display: grid; place-items: center; }
++.sc-pill { font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
++.sc-pill--manual { background: #ffe0b2; color: #b26a00; }
++.sc-pill--ai { background: #cdeffe; color: #036; }
++.sc-pill--assigned { background: #e1d5f7; color: #5b2ea6; }
++.sc-root[data-console-theme="dark"] .sc-pill--manual { background: #4d3a12; color: #f4c37a; }
++.sc-root[data-console-theme="dark"] .sc-pill--ai { background: #123a4d; color: #9fdcff; }
++.sc-root[data-console-theme="dark"] .sc-pill--assigned { background: #2f2547; color: #cbb6f2; }
++
++/* Chat -------------------------------------------------------------------- */
++.sc-col--chat { background: var(--sc-chat-bg); }
++.sc-chat-head { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--sc-header); color: var(--sc-header-text); }
++.sc-chat-head .sc-avatar { width: 40px; height: 40px; flex-basis: 40px; }
++.sc-chat-title { flex: 1; min-width: 0; }
++.sc-chat-title b { display: block; font-size: 15px; }
++.sc-chat-title small { font-size: 12px; opacity: .85; }
++.sc-chat-actions { display: flex; gap: 4px; align-items: center; }
++.sc-chat-actions .sc-icon-btn { color: var(--sc-header-text); }
++.sc-chat-actions .sc-icon-btn:hover { background: rgba(255,255,255,.15); }
++
++.sc-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; user-select: none; }
++.sc-switch { position: relative; width: 38px; height: 20px; background: rgba(255,255,255,.35); border-radius: 20px; transition: background .2s; }
++.sc-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: transform .2s; }
++.sc-toggle.on .sc-switch { background: #25d366; }
++.sc-toggle.on .sc-switch::after { transform: translateX(18px); }
++
++.sc-messages { flex: 1; overflow-y: auto; padding: 16px 8%; display: flex; flex-direction: column; gap: 4px; }
++.sc-day { align-self: center; background: var(--sc-panel); color: var(--sc-muted); font-size: 12px; padding: 4px 12px; border-radius: 8px; margin: 10px 0; box-shadow: var(--sc-shadow); }
++.sc-bubble {
++  max-width: 68%; padding: 7px 10px 5px; border-radius: 10px; font-size: 14px;
++  line-height: 1.35; position: relative; box-shadow: var(--sc-shadow); animation: sc-pop .15s ease;
++  word-wrap: break-word; white-space: pre-wrap;
++}
++.sc-bubble.in { align-self: flex-start; background: var(--sc-bubble-in); border-top-left-radius: 2px; }
++.sc-bubble.out { align-self: flex-end; background: var(--sc-bubble-out); border-top-right-radius: 2px; }
++.sc-bubble .sc-meta { display: flex; gap: 5px; justify-content: flex-end; align-items: center; font-size: 10px; color: var(--sc-muted); margin-top: 2px; }
++.sc-bubble .sc-sender { font-size: 10px; font-weight: 700; color: var(--sc-accent); margin-bottom: 2px; }
++.sc-tick { font-size: 12px; }
++.sc-tick.read { color: #53bdeb; }
++.sc-attach { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; background: rgba(0,0,0,.05); border-radius: 8px; margin-bottom: 4px; font-size: 13px; }
++.sc-root[data-console-theme="dark"] .sc-attach { background: rgba(255,255,255,.08); }
++.sc-attach img { max-width: 220px; border-radius: 8px; display: block; }
++
++/* Composer ---------------------------------------------------------------- */
++.sc-composer { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; background: var(--sc-panel); border-top: 1px solid var(--sc-border); }
++.sc-composer-row { display: flex; align-items: flex-end; gap: 8px; }
++.sc-input { flex: 1; border: 1px solid var(--sc-border); background: var(--sc-bg); border-radius: 20px; padding: 10px 14px; color: var(--sc-text); font-size: 14px; resize: none; max-height: 120px; outline: none; font-family: inherit; }
++.sc-send { background: var(--sc-accent); color: #fff; border: none; width: 44px; height: 44px; border-radius: 50%; font-size: 18px; cursor: pointer; flex: 0 0 44px; transition: transform .1s; }
++.sc-send:hover { transform: scale(1.05); }
++.sc-send:disabled { opacity: .5; cursor: not-allowed; }
++.sc-emoji-tray { display: flex; flex-wrap: wrap; gap: 4px; max-height: 0; overflow: hidden; transition: max-height .2s; }
++.sc-emoji-tray.open { max-height: 120px; overflow-y: auto; padding: 4px 0; }
++.sc-emoji { font-size: 20px; cursor: pointer; padding: 3px 5px; border-radius: 6px; }
++.sc-emoji:hover { background: var(--sc-hover); }
++.sc-attach-preview { display: none; align-items: center; gap: 10px; padding: 8px 12px; background: var(--sc-bg); border-radius: 8px; font-size: 13px; }
++.sc-attach-preview.show { display: flex; }
++
++.sc-manual-banner { display: none; padding: 6px 12px; background: #fff3cd; color: #7a5b00; font-size: 12px; text-align: center; }
++.sc-manual-banner.show { display: block; }
++.sc-root[data-console-theme="dark"] .sc-manual-banner { background: #3a3320; color: #f4c37a; }
++
++/* Profile drawer ---------------------------------------------------------- */
++.sc-profile-head { padding: 20px 16px; text-align: center; border-bottom: 1px solid var(--sc-border); }
++.sc-profile-head .sc-avatar { width: 72px; height: 72px; flex-basis: 72px; margin: 0 auto 10px; font-size: 26px; }
++.sc-profile-section { padding: 14px 16px; border-bottom: 1px solid var(--sc-border); }
++.sc-profile-section h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--sc-muted); }
++.sc-kv { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 3px 0; }
++.sc-kv span { color: var(--sc-muted); }
++.sc-metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
++.sc-metric { background: var(--sc-bg); border-radius: 8px; padding: 8px; text-align: center; }
++.sc-metric b { font-size: 18px; display: block; }
++.sc-metric small { font-size: 10px; color: var(--sc-muted); text-transform: uppercase; }
++.sc-notes { display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; }
++.sc-note-item { background: var(--sc-note); border-radius: 8px; padding: 8px; font-size: 13px; }
++.sc-note-item small { display: block; color: var(--sc-muted); font-size: 10px; margin-top: 3px; }
++.sc-note-input { width: 100%; border: 1px solid var(--sc-border); background: var(--sc-bg); border-radius: 8px; padding: 8px; color: var(--sc-text); font-size: 13px; resize: vertical; margin-top: 6px; font-family: inherit; }
++.sc-btn { border: none; border-radius: 8px; padding: 8px 12px; font-size: 13px; cursor: pointer; background: var(--sc-accent); color: #fff; font-weight: 600; }
++.sc-btn--ghost { background: transparent; border: 1px solid var(--sc-border); color: var(--sc-text); }
++.sc-btn--block { width: 100%; margin-top: 6px; }
++.sc-row { display: flex; gap: 6px; }
++.sc-select { flex: 1; border: 1px solid var(--sc-border); background: var(--sc-bg); color: var(--sc-text); border-radius: 8px; padding: 7px; font-size: 13px; }
++
++/* Shopify + payment panels ------------------------------------------------ */
++.sc-product { display: flex; gap: 8px; align-items: center; padding: 6px; border: 1px solid var(--sc-border); border-radius: 8px; margin-bottom: 6px; font-size: 12px; }
++.sc-product img { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; }
++
++/* Empty / placeholder ----------------------------------------------------- */
++.sc-empty { flex: 1; display: grid; place-items: center; text-align: center; color: var(--sc-muted); padding: 40px; }
++.sc-empty i { font-size: 56px; opacity: .3; display: block; margin-bottom: 12px; }
++
++@keyframes sc-fade { from { opacity: 0; } to { opacity: 1; } }
++@keyframes sc-pop { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
++
++/* Responsive -------------------------------------------------------------- */
++@media (max-width: 1100px) {
++  .sc-root, .sc-root.sc-no-profile { grid-template-columns: 300px 1fr; }
++  .sc-col--profile { display: none; }
++}
++@media (max-width: 720px) {
++  .sc-root { grid-template-columns: 1fr; }
++  .sc-col--inbox { display: none; }
++  .sc-root.sc-show-inbox .sc-col--inbox { display: flex; }
++  .sc-root.sc-show-inbox .sc-col--chat { display: none; }
++}
+diff --git a/admin/static/support_console.js b/admin/static/support_console.js
+new file mode 100644
+index 0000000..58ad627
+--- /dev/null
++++ b/admin/static/support_console.js
+@@ -0,0 +1,403 @@
++/* ==========================================================================
++   support_console.js — v10.2 real-time WhatsApp Support Console
++   Polling-based live console (every ~3s). No external deps. Talks to the
++   /admin/support/api/* endpoints. Safe for normal browser deployment (uses
++   localStorage for UI prefs; all state-changing calls send the CSRF token).
++   ========================================================================== */
++(function () {
++  "use strict";
++
++  var CFG = window.SC_CONFIG || {};
++  var API = (CFG.base || "/admin/support") + "/api";
++  var POLL = CFG.pollMs || 3000;
++
++  var state = {
++    activeWa: null,
++    convs: [],
++    prev: {},              // wa -> {last_message_at, unread} for notification diffing
++    attach: null,          // pending File
++    soundOn: load("sc_sound", "1") === "1",
++    filterUnread: false,
++    search: "",
++    lastThreadKey: "",
++    firstLoad: true
++  };
++
++  /* ---- tiny helpers ---------------------------------------------------- */
++  function $(sel, root) { return (root || document).querySelector(sel); }
++  function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
++  function load(k, d) { try { return localStorage.getItem(k) || d; } catch (e) { return d; } }
++  function save(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
++  function esc(s) { return (s == null ? "" : String(s)).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
++  function initials(name, num) { name = (name || "").trim(); if (name) return name.slice(0, 2).toUpperCase(); return (num || "?").slice(-2); }
++
++  function getJSON(url) {
++    return fetch(url, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
++      .then(function (r) { return r.json(); });
++  }
++  function send(url, body, isForm) {
++    var opts = { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": CFG.csrf } };
++    if (isForm) { opts.body = body; }
++    else { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body || {}); }
++    return fetch(url, opts).then(function (r) { return r.json().catch(function () { return { ok: false }; }); });
++  }
++
++  /* ---- time / date formatting ----------------------------------------- */
++  function parseTs(s) { if (!s) return null; var d = new Date(s); return isNaN(d) ? null : d; }
++  function fmtTime(s) { var d = parseTs(s); return d ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""; }
++  function fmtDayLabel(s) {
++    var d = parseTs(s); if (!d) return "";
++    var today = new Date(); var y = new Date(); y.setDate(today.getDate() - 1);
++    if (d.toDateString() === today.toDateString()) return "Today";
++    if (d.toDateString() === y.toDateString()) return "Yesterday";
++    return d.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
++  }
++  function fmtRel(s) {
++    var d = parseTs(s); if (!d) return "";
++    var mins = Math.floor((Date.now() - d.getTime()) / 60000);
++    if (mins < 1) return "now"; if (mins < 60) return mins + "m";
++    if (mins < 1440) return Math.floor(mins / 60) + "h";
++    return fmtDayLabel(s);
++  }
++
++  /* ---- ticks ----------------------------------------------------------- */
++  function tick(status) {
++    switch (status) {
++      case "read": return '<span class="sc-tick read">✓✓</span>';
++      case "delivered": return '<span class="sc-tick">✓✓</span>';
++      case "sent": return '<span class="sc-tick">✓</span>';
++      case "failed": return '<span class="sc-tick" style="color:#e5533c">!</span>';
++      default: return '<span class="sc-tick">🕓</span>';
++    }
++  }
++
++  /* ---- INBOX ----------------------------------------------------------- */
++  function pollInbox() {
++    var q = encodeURIComponent(state.search || "");
++    var url = API + "/inbox?q=" + q + (state.filterUnread ? "&unread=1" : "");
++    getJSON(url).then(function (res) {
++      if (!res || !res.ok) return;
++      detectNotifications(res.conversations || []);
++      state.convs = res.conversations || [];
++      renderInbox();
++      updateNavBadge();
++    }).catch(function () {});
++  }
++
++  function renderInbox() {
++    var list = $("#sc-conv-list");
++    if (!list) return;
++    if (!state.convs.length) { list.innerHTML = '<div class="sc-empty" style="height:auto;padding:30px">No conversations yet.</div>'; return; }
++    list.innerHTML = "";
++    state.convs.forEach(function (c) {
++      var row = el("div", "sc-conv" + (c.wa_number === state.activeWa ? " active" : ""));
++      row.setAttribute("data-wa", c.wa_number);
++      var badges = "";
++      if (c.unread_count > 0) badges += '<span class="sc-unread">' + c.unread_count + '</span>';
++      badges += c.ai_enabled ? '<span class="sc-pill sc-pill--ai">AI</span>' : '<span class="sc-pill sc-pill--manual">Manual</span>';
++      if (c.assigned_to) badges += '<span class="sc-pill sc-pill--assigned">@' + esc(c.assigned_to) + '</span>';
++      row.innerHTML =
++        '<div class="sc-avatar">' + esc(initials(c.profile_name, c.wa_number)) + '</div>' +
++        '<div class="sc-conv-body">' +
++          '<div class="sc-conv-top"><span class="sc-conv-name">' + esc(c.profile_name || c.wa_number) + '</span>' +
++          '<span class="sc-conv-time">' + fmtRel(c.last_message_at) + '</span></div>' +
++          '<div class="sc-conv-bottom"><span class="sc-conv-msg">' +
++          (c.last_direction === "out" ? '↩ ' : '') + esc(c.last_message || "") + '</span>' +
++          '<span class="sc-badges">' + badges + '</span></div>' +
++        '</div>';
++      row.addEventListener("click", function () { openConversation(c.wa_number); });
++      list.appendChild(row);
++    });
++  }
++
++  function detectNotifications(convs) {
++    if (state.firstLoad) { state.firstLoad = false; convs.forEach(function (c) { state.prev[c.wa_number] = snapshot(c); }); return; }
++    convs.forEach(function (c) {
++      var p = state.prev[c.wa_number];
++      var isNewInbound = c.last_direction === "in" && (!p || c.last_message_at > (p.last_message_at || ""));
++      if (isNewInbound && c.wa_number !== state.activeWa) {
++        notify(c.profile_name || c.wa_number, c.last_message || "New message");
++      }
++      state.prev[c.wa_number] = snapshot(c);
++    });
++  }
++  function snapshot(c) { return { last_message_at: c.last_message_at, unread: c.unread_count }; }
++
++  /* ---- NOTIFICATIONS --------------------------------------------------- */
++  function notify(title, body) {
++    if (state.soundOn) { try { var a = $("#sc-ping"); if (a) { a.currentTime = 0; a.play().catch(function () {}); } } catch (e) {} }
++    if (window.Notification && Notification.permission === "granted") {
++      try { new Notification("💬 " + title, { body: body, tag: title }); } catch (e) {}
++    }
++    document.title = "🔴 New message · Support Console";
++  }
++  function updateNavBadge() {
++    var total = state.convs.reduce(function (n, c) { return n + (c.unread_count || 0); }, 0);
++    var badge = document.querySelector("[data-support-unread]");
++    if (badge) { badge.textContent = total; badge.style.display = total > 0 ? "" : "none"; }
++    if (!total) document.title = "Support Console · ME-HAAT Fashion AI";
++  }
++
++  /* ---- STATS ----------------------------------------------------------- */
++  function pollStats() {
++    getJSON(API + "/stats").then(function (res) {
++      if (!res || !res.ok) return;
++      Object.keys(res.stats).forEach(function (k) {
++        var node = document.querySelector('[data-stat="' + k + '"]');
++        if (node) node.textContent = res.stats[k];
++      });
++    }).catch(function () {});
++  }
++
++  /* ---- CONVERSATION / THREAD ------------------------------------------ */
++  function openConversation(wa) {
++    state.activeWa = wa;
++    state.lastThreadKey = "";
++    $("#sc-chat-empty").style.display = "none";
++    $("#sc-chat").style.display = "flex";
++    var c = state.convs.filter(function (x) { return x.wa_number === wa; })[0] || {};
++    $("#sc-chat-name").textContent = c.profile_name || wa;
++    $("#sc-chat-number").textContent = wa;
++    $("#sc-chat-avatar").textContent = initials(c.profile_name, wa);
++    renderInbox();
++    pollThread(true);
++    loadProfile();
++    loadNotes();
++    document.getElementById("sc-root").classList.remove("sc-show-inbox");
++  }
++
++  function pollThread(force) {
++    if (!state.activeWa) return;
++    getJSON(API + "/thread/" + encodeURIComponent(state.activeWa) + "?mark_read=1").then(function (res) {
++      if (!res || !res.ok) return;
++      var key = JSON.stringify(res.messages.map(function (m) { return m.id + ":" + (m.status || ""); }));
++      if (!force && key === state.lastThreadKey) return;
++      state.lastThreadKey = key;
++      renderThread(res.messages);
++    }).catch(function () {});
++  }
++
++  function renderThread(msgs) {
++    var box = $("#sc-messages");
++    var atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
++    box.innerHTML = "";
++    var lastDay = "";
++    msgs.forEach(function (m) {
++      var day = fmtDayLabel(m.created_at);
++      if (day && day !== lastDay) { box.appendChild(el("div", "sc-day", esc(day))); lastDay = day; }
++      var side = m.direction === "in" ? "in" : "out";
++      var b = el("div", "sc-bubble " + side);
++      var inner = "";
++      if (m.source === "admin" && m.admin_user) inner += '<div class="sc-sender">' + esc(m.admin_user) + '</div>';
++      if (m.type && m.type !== "text") {
++        var icon = m.type === "image" ? "image" : (m.type === "audio" ? "mic" : "file-earmark-pdf");
++        inner += '<div class="sc-attach"><i class="bi bi-' + icon + '"></i> ' + esc(m.filename || m.type) + '</div>';
++      }
++      if (m.text) inner += esc(m.text);
++      inner += '<div class="sc-meta">' + fmtTime(m.created_at) + (side === "out" ? " " + tick(m.status) : "") + '</div>';
++      b.innerHTML = inner;
++      box.appendChild(b);
++    });
++    if (atBottom) box.scrollTop = box.scrollHeight;
++  }
++
++  /* ---- PROFILE + NOTES ------------------------------------------------- */
++  function loadProfile() {
++    getJSON(API + "/profile/" + encodeURIComponent(state.activeWa)).then(function (res) {
++      if (!res || !res.ok) return;
++      var p = res.profile;
++      $("#sc-prof-avatar").textContent = initials(p.profile_name, p.wa_number);
++      $("#sc-prof-name").textContent = p.profile_name || p.wa_number;
++      $("#sc-prof-number").textContent = p.wa_number;
++      setProf("order_count", p.order_count);
++      setProf("total_spend", (p.total_spend || 0).toLocaleString());
++      setProf("message_count", p.message_count);
++      setProf("conversation_count", p.conversation_count);
++      setProf("language", p.language || "—");
++      setProf("email", p.email || "—");
++      setProf("last_order", p.last_order ? (p.last_order.order_name || "—") : "—");
++      // AI toggle
++      var t = $("#sc-ai-toggle"); t.classList.toggle("on", !!p.ai_enabled);
++      $("#sc-ai-label").textContent = p.ai_enabled ? "AI" : "Manual";
++      $("#sc-manual-banner").classList.toggle("show", !p.ai_enabled);
++      $("#sc-status").value = p.status || "open";
++      buildAssignSelect(p.assigned_to);
++    }).catch(function () {});
++  }
++  function setProf(k, v) { var n = document.querySelector('[data-prof="' + k + '"]'); if (n) n.textContent = v; }
++
++  function buildAssignSelect(current) {
++    var sel = $("#sc-assign");
++    var opts = '<option value="">Unassigned</option><option value="__me__">Assign to me (' + esc(CFG.me) + ')</option>';
++    if (current && current !== CFG.me) opts += '<option value="' + esc(current) + '" selected>@' + esc(current) + '</option>';
++    sel.innerHTML = opts;
++    if (current === CFG.me) sel.value = "__me__";
++  }
++
++  function loadNotes() {
++    getJSON(API + "/notes/" + encodeURIComponent(state.activeWa)).then(function (res) {
++      if (!res || !res.ok) return;
++      var box = $("#sc-notes"); box.innerHTML = "";
++      if (!res.notes.length) { box.innerHTML = '<div style="color:var(--sc-muted);font-size:12px">No notes yet.</div>'; return; }
++      res.notes.forEach(function (n) {
++        box.appendChild(el("div", "sc-note-item", esc(n.note) + '<small>' + esc(n.admin_user) + ' · ' + fmtRel(n.created_at) + '</small>'));
++      });
++    }).catch(function () {});
++  }
++
++  /* ---- SEND ------------------------------------------------------------ */
++  function doSend() {
++    if (!state.activeWa) return;
++    var input = $("#sc-text");
++    var text = input.value.trim();
++    if (state.attach) return sendMedia(text);
++    if (!text) return;
++    input.value = ""; autoGrow(input);
++    send(API + "/send/" + encodeURIComponent(state.activeWa), { text: text }).then(function (res) {
++      if (!res.ok) toast("Send failed: " + (res.error || "WhatsApp error"), true);
++      pollThread(true);
++    });
++  }
++  function sendMedia(caption) {
++    var fd = new FormData();
++    fd.append("file", state.attach);
++    if (caption) fd.append("caption", caption);
++    $("#sc-text").value = "";
++    clearAttach();
++    send(API + "/send/" + encodeURIComponent(state.activeWa), fd, true).then(function (res) {
++      if (!res.ok) toast("Media send failed: " + (res.error || ""), true);
++      pollThread(true);
++    });
++  }
++
++  /* ---- ACTIONS: ai toggle / assign / status / notes ------------------- */
++  function toggleAI() {
++    if (!state.activeWa) return;
++    var on = !$("#sc-ai-toggle").classList.contains("on");
++    send(API + "/ai-toggle/" + encodeURIComponent(state.activeWa), { ai_enabled: on }).then(function (res) {
++      if (res.ok) { loadProfile(); pollInbox(); }
++    });
++  }
++  function changeAssign() {
++    send(API + "/assign/" + encodeURIComponent(state.activeWa), { assigned_to: $("#sc-assign").value }).then(pollInbox);
++  }
++  function changeStatus() {
++    send(API + "/status/" + encodeURIComponent(state.activeWa), { status: $("#sc-status").value });
++  }
++  function addNote() {
++    var t = $("#sc-note-text"); var note = t.value.trim(); if (!note) return;
++    send(API + "/notes/" + encodeURIComponent(state.activeWa), { note: note }).then(function (res) {
++      if (res.ok) { t.value = ""; loadNotes(); }
++    });
++  }
++
++  /* ---- SHOPIFY + PAYMENT ---------------------------------------------- */
++  function shopifySearch() {
++    var q = $("#sc-shopify-q").value.trim(); if (!q) return;
++    getJSON(API + "/shopify/search?q=" + encodeURIComponent(q)).then(function (res) {
++      var box = $("#sc-shopify-results"); box.innerHTML = "";
++      (res.products || []).forEach(function (p) {
++        box.appendChild(el("div", "sc-product",
++          (p.image ? '<img src="' + esc(p.image) + '">' : '<i class="bi bi-bag"></i>') +
++          '<div style="flex:1"><b>' + esc(p.title) + '</b><br>' + esc(p.price || p.formatted_price || "") + '</div>'));
++      });
++      if (!(res.products || []).length) box.innerHTML = '<div style="color:var(--sc-muted);font-size:12px">No products.</div>';
++    });
++  }
++  function shopifySendCards() {
++    var q = $("#sc-shopify-q").value.trim(); if (!q || !state.activeWa) return;
++    send(API + "/shopify/send-card/" + encodeURIComponent(state.activeWa), { query: q }).then(function (res) {
++      toast(res.ok ? ("Sent " + res.sent + " product card(s)") : ("Failed: " + (res.error || "")), !res.ok);
++      pollThread(true);
++    });
++  }
++  function generatePayment() {
++    var amt = parseFloat($("#sc-pay-amount").value);
++    if (!amt || amt <= 0) return toast("Enter a valid amount", true);
++    var cur = $("#sc-pay-currency").value || "INR";
++    send(API + "/payment/link/" + encodeURIComponent(state.activeWa), { amount: amt, currency: cur, send: true }).then(function (res) {
++      if (res.ok) {
++        $("#sc-pay-result").innerHTML = 'Link: <a href="' + esc(res.url) + '" target="_blank">' + esc(res.url) + '</a> ' +
++          '<button class="sc-btn sc-btn--ghost" onclick="navigator.clipboard.writeText(\'' + esc(res.url) + '\')">Copy</button>' +
++          (res.sent ? ' <span style="color:var(--sc-accent)">✓ sent</span>' : '');
++        pollThread(true);
++      } else { toast("Payment link failed: " + (res.error || ""), true); }
++    });
++  }
++
++  /* ---- EMOJI + ATTACH + COMPOSER -------------------------------------- */
++  var EMOJIS = "😀 😁 😂 🤣 😊 😍 😘 👍 🙏 🔥 🎉 ✅ ❤️ 🛍️ 👗 👚 👠 💯 🙌 ⭐ 📦 🚚 💳 🤝 👋".split(" ");
++  function buildEmoji() {
++    var tray = $("#sc-emoji-tray");
++    EMOJIS.forEach(function (e) {
++      var s = el("span", "sc-emoji", e);
++      s.addEventListener("click", function () { var i = $("#sc-text"); i.value += e; i.focus(); autoGrow(i); });
++      tray.appendChild(s);
++    });
++  }
++  function autoGrow(t) { t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }
++  function clearAttach() { state.attach = null; $("#sc-attach-preview").classList.remove("show"); $("#sc-file").value = ""; }
++
++  function toast(msg, isErr) {
++    var t = el("div", "", esc(msg));
++    t.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:9999;" +
++      "padding:10px 18px;border-radius:8px;color:#fff;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.25);" +
++      "background:" + (isErr ? "#e5533c" : "#00a884");
++    document.body.appendChild(t);
++    setTimeout(function () { t.style.opacity = "0"; t.style.transition = "opacity .3s"; setTimeout(function () { t.remove(); }, 300); }, 2600);
++  }
++
++  /* ---- THEME + SOUND --------------------------------------------------- */
++  function applyTheme(theme) { $("#sc-root").setAttribute("data-console-theme", theme); save("sc_theme", theme);
++    $("#sc-theme-toggle").innerHTML = theme === "dark" ? '<i class="bi bi-sun"></i>' : '<i class="bi bi-moon-stars"></i>'; }
++
++  /* ---- WIRE UP --------------------------------------------------------- */
++  function bind() {
++    $("#sc-send").addEventListener("click", doSend);
++    $("#sc-text").addEventListener("keydown", function (e) {
++      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); }
++    });
++    $("#sc-text").addEventListener("input", function () { autoGrow(this); });
++    $("#sc-search").addEventListener("input", function () { state.search = this.value.trim(); pollInbox(); });
++    $("#sc-filter-unread").addEventListener("click", function () { state.filterUnread = !state.filterUnread; this.classList.toggle("active"); pollInbox(); });
++    $("#sc-ai-toggle").addEventListener("click", toggleAI);
++    $("#sc-assign").addEventListener("change", changeAssign);
++    $("#sc-status").addEventListener("change", changeStatus);
++    $("#sc-note-add").addEventListener("click", addNote);
++    $("#sc-emoji-btn").addEventListener("click", function () { $("#sc-emoji-tray").classList.toggle("open"); });
++    $("#sc-attach-btn").addEventListener("click", function () { $("#sc-file").click(); });
++    $("#sc-file").addEventListener("change", function () {
++      if (this.files && this.files[0]) { state.attach = this.files[0]; $("#sc-attach-name").textContent = this.files[0].name; $("#sc-attach-preview").classList.add("show"); }
++    });
++    $("#sc-attach-clear").addEventListener("click", clearAttach);
++    $("#sc-shopify-btn").addEventListener("click", function () { togglePanel("#sc-shopify-panel"); });
++    $("#sc-pay-btn").addEventListener("click", function () { togglePanel("#sc-pay-panel"); });
++    $("#sc-shopify-q").addEventListener("keydown", function (e) { if (e.key === "Enter") shopifySearch(); });
++    $("#sc-shopify-send").addEventListener("click", shopifySendCards);
++    $("#sc-pay-generate").addEventListener("click", generatePayment);
++    $("#sc-theme-toggle").addEventListener("click", function () {
++      applyTheme($("#sc-root").getAttribute("data-console-theme") === "dark" ? "light" : "dark");
++    });
++    $("#sc-sound-toggle").addEventListener("click", function () {
++      state.soundOn = !state.soundOn; save("sc_sound", state.soundOn ? "1" : "0");
++      this.innerHTML = state.soundOn ? '<i class="bi bi-volume-up"></i>' : '<i class="bi bi-volume-mute"></i>';
++    });
++    var back = $("#sc-back"); if (back) back.addEventListener("click", function () { document.getElementById("sc-root").classList.add("sc-show-inbox"); });
++    document.addEventListener("click", function () { document.title = document.title.replace("🔴 New message · ", ""); }, { once: false });
++  }
++  function togglePanel(sel) { var p = $(sel); p.style.display = p.style.display === "none" ? "block" : "none"; }
++
++  /* ---- INIT ------------------------------------------------------------ */
++  function init() {
++    applyTheme(load("sc_theme", "light"));
++    $("#sc-sound-toggle").innerHTML = state.soundOn ? '<i class="bi bi-volume-up"></i>' : '<i class="bi bi-volume-mute"></i>';
++    buildEmoji();
++    bind();
++    if (window.Notification && Notification.permission === "default") { try { Notification.requestPermission(); } catch (e) {} }
++    pollInbox(); pollStats();
++    setInterval(function () { pollInbox(); pollStats(); if (state.activeWa) pollThread(false); }, POLL);
++  }
++
++  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
++  else init();
++})();
+diff --git a/admin/support_console.py b/admin/support_console.py
+new file mode 100644
+index 0000000..13bd4f7
+--- /dev/null
++++ b/admin/support_console.py
+@@ -0,0 +1,553 @@
++"""
++admin/support_console.py
++------------------------
++Service layer for the v10.2 real-time WhatsApp Support Console.
++
++Pure data/business logic (no Flask): per-conversation AI toggle, assignment,
++internal notes, admin message recording, delivery-status tracking, a merged
++customer↔bot↔admin timeline, live statistics and a customer profile. The HTTP
++blueprint (``admin/support_routes.py``) is a thin layer over these functions.
++
++Everything goes through the ONE shared SQLAlchemy engine, so it works on SQLite
++and PostgreSQL alike. Every function is written to be safe to call from request
++handlers and from the WhatsApp webhook path.
++"""
++
++from __future__ import annotations
++
++from datetime import datetime, timedelta, timezone
++from typing import Any, Dict, List, Optional
++
++from sqlalchemy import func
++
++from database.db import session_scope
++from database.models_support import (
++    AdminMessage,
++    ConversationAssignment,
++    ConversationSettings,
++    InternalNote,
++    MessageStatus,
++)
++from database.models_admin import DashConversation, DashCustomer, DashMessage, DashOrder
++from utils.logging import logger
++
++
++# --------------------------------------------------------------------------- #
++# Time helpers (ISO strings, matching the existing dashboard tables)
++# --------------------------------------------------------------------------- #
++def _now_iso() -> str:
++    return datetime.now(timezone.utc).isoformat(timespec="seconds")
++
++
++def audit(actor: str, action: str, entity_id: str = "", detail: str = "", ip: str = "") -> None:
++    """Write a tamper-evident admin audit row (best-effort; never raises).
++
++    Reuses the project's ``audit_logs`` table + hash chain so console actions
++    appear alongside the rest of the admin audit trail.
++    """
++    try:
++        from database.models import AuditLog
++
++        with session_scope() as session:
++            row = AuditLog(
++                actor=actor or "admin", action=action, entity="support_console",
++                entity_id=(entity_id or None), detail=(detail or "")[:2000], ip=ip or None,
++            )
++            session.add(row)
++            try:
++                from commerce.audit_chain import apply_chain
++
++                session.flush()
++                apply_chain(session, row)
++            except Exception:  # noqa: BLE001 - chain is best-effort
++                pass
++    except Exception as exc:  # noqa: BLE001 - audit must never break the action
++        logger.debug("SUPPORT | audit write failed (%s): %s", action, exc)
++
++
++def _today_start_iso() -> str:
++    now = datetime.now(timezone.utc)
++    return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
++
++
++def _minutes_ago_iso(minutes: int) -> str:
++    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(timespec="seconds")
++
++
++# --------------------------------------------------------------------------- #
++# Conversation settings (AI toggle + status)
++# --------------------------------------------------------------------------- #
++def get_settings(wa_number: str) -> Dict[str, Any]:
++    """Return {ai_enabled, status} for a conversation (defaults: AI on / open)."""
++    try:
++        with session_scope() as session:
++            row = session.get(ConversationSettings, wa_number)
++            if row is None:
++                return {"ai_enabled": True, "status": "open"}
++            return {"ai_enabled": bool(row.ai_enabled), "status": row.status}
++    except Exception as exc:  # noqa: BLE001 - never break callers (incl. webhook)
++        logger.debug("SUPPORT | get_settings failed for %s: %s", wa_number, exc)
++        return {"ai_enabled": True, "status": "open"}
++
++
++def is_manual_mode(wa_number: str) -> bool:
++    """True when the bot must NOT auto-reply (admin has taken over).
++
++    Defaults to False (AI on) and is fully guarded, so a database hiccup can
++    never accidentally silence the bot for every customer.
++    """
++    if not wa_number:
++        return False
++    try:
++        return not get_settings(wa_number)["ai_enabled"]
++    except Exception:  # noqa: BLE001
++        return False
++
++
++def set_ai_enabled(wa_number: str, enabled: bool, admin_user: str = "") -> Dict[str, Any]:
++    """Enable/disable the bot for a conversation. Returns the new settings."""
++    now = _now_iso()
++    with session_scope() as session:
++        row = session.get(ConversationSettings, wa_number)
++        if row is None:
++            row = ConversationSettings(
++                wa_number=wa_number, ai_enabled=enabled, status="open",
++                updated_by=admin_user or None, created_at=now, updated_at=now,
++            )
++            session.add(row)
++        else:
++            row.ai_enabled = enabled
++            row.updated_by = admin_user or row.updated_by
++            row.updated_at = now
++    logger.info("SUPPORT | ai_enabled=%s for %s by %s", enabled, wa_number, admin_user or "?")
++    return {"ai_enabled": enabled, "status": get_settings(wa_number)["status"]}
++
++
++def set_status(wa_number: str, status: str, admin_user: str = "") -> str:
++    """Set a conversation status (open|pending|closed)."""
++    status = status if status in {"open", "pending", "closed"} else "open"
++    now = _now_iso()
++    with session_scope() as session:
++        row = session.get(ConversationSettings, wa_number)
++        if row is None:
++            row = ConversationSettings(
++                wa_number=wa_number, ai_enabled=True, status=status,
++                updated_by=admin_user or None, created_at=now, updated_at=now,
++            )
++            session.add(row)
++        else:
++            row.status = status
++            row.updated_by = admin_user or row.updated_by
++            row.updated_at = now
++    return status
++
++
++# --------------------------------------------------------------------------- #
++# Assignment
++# --------------------------------------------------------------------------- #
++def assign(wa_number: str, assigned_to: Optional[str], assigned_by: str = "") -> Dict[str, Any]:
++    """Assign (or unassign, with ``assigned_to=None``) a conversation."""
++    now = _now_iso()
++    with session_scope() as session:
++        obj = (
++            session.query(ConversationAssignment)
++            .filter(ConversationAssignment.wa_number == wa_number)
++            .first()
++        )
++        if obj is None:
++            obj = ConversationAssignment(
++                wa_number=wa_number, assigned_to=assigned_to, assigned_by=assigned_by or None,
++                created_at=now, updated_at=now,
++            )
++            session.add(obj)
++        else:
++            obj.assigned_to = assigned_to
++            obj.assigned_by = assigned_by or obj.assigned_by
++            obj.updated_at = now
++    logger.info("SUPPORT | assign %s -> %s by %s", wa_number, assigned_to, assigned_by or "?")
++    return {"wa_number": wa_number, "assigned_to": assigned_to}
++
++
++def get_assignment(wa_number: str) -> Optional[str]:
++    """Return the admin a conversation is assigned to, or None."""
++    try:
++        with session_scope() as session:
++            obj = (
++                session.query(ConversationAssignment)
++                .filter(ConversationAssignment.wa_number == wa_number)
++                .first()
++            )
++            return obj.assigned_to if obj else None
++    except Exception as exc:  # noqa: BLE001
++        logger.debug("SUPPORT | get_assignment failed: %s", exc)
++        return None
++
++
++# --------------------------------------------------------------------------- #
++# Internal notes
++# --------------------------------------------------------------------------- #
++def add_note(wa_number: str, admin_user: str, note: str) -> Dict[str, Any]:
++    """Add an admin-only note. Returns the created note dict."""
++    note = (note or "").strip()
++    if not note:
++        raise ValueError("note is required")
++    now = _now_iso()
++    with session_scope() as session:
++        obj = InternalNote(wa_number=wa_number, admin_user=admin_user, note=note[:5000], created_at=now)
++        session.add(obj)
++        session.flush()
++        note_id = obj.id
++    return {"id": note_id, "wa_number": wa_number, "admin_user": admin_user, "note": note, "created_at": now}
++
++
++def list_notes(wa_number: str, limit: int = 100) -> List[Dict[str, Any]]:
++    """List internal notes for a conversation, newest first."""
++    with session_scope() as session:
++        rows = (
++            session.query(InternalNote)
++            .filter(InternalNote.wa_number == wa_number)
++            .order_by(InternalNote.id.desc())
++            .limit(limit)
++            .all()
++        )
++        return [
++            {"id": r.id, "admin_user": r.admin_user, "note": r.note, "created_at": r.created_at}
++            for r in rows
++        ]
++
++
++# --------------------------------------------------------------------------- #
++# Admin messages + status
++# --------------------------------------------------------------------------- #
++def record_admin_message(
++    wa_number: str,
++    admin_user: str,
++    *,
++    msg_type: str = "text",
++    body: Optional[str] = None,
++    media_id: Optional[str] = None,
++    filename: Optional[str] = None,
++    mime_type: Optional[str] = None,
++    wa_message_id: Optional[str] = None,
++    status: str = "queued",
++    error: Optional[str] = None,
++) -> Dict[str, Any]:
++    """Persist a console-sent message and return its dict representation."""
++    now = _now_iso()
++    with session_scope() as session:
++        obj = AdminMessage(
++            wa_number=wa_number, admin_user=admin_user, direction="out", msg_type=msg_type,
++            body=body, media_id=media_id, filename=filename, mime_type=mime_type,
++            wa_message_id=wa_message_id, status=status, error=error, created_at=now,
++        )
++        session.add(obj)
++        session.flush()
++        rec = _admin_msg_to_dict(obj)
++    return rec
++
++
++def mark_outbound(wa_number: str, snippet: str) -> None:
++    """Update the inbox conversation summary after an admin sends a reply.
++
++    Sets last_message/last_direction='out', bumps the timestamp + message count
++    and clears the unread counter — mirroring what the bot path does, but without
++    inserting into the ``messages`` table (admin sends live in ``admin_messages``).
++    """
++    now = _now_iso()
++    text = (snippet or "")[:280]
++    try:
++        with session_scope() as session:
++            conv = (
++                session.query(DashConversation)
++                .filter(DashConversation.wa_number == wa_number)
++                .first()
++            )
++            if conv is None:
++                session.add(DashConversation(
++                    wa_number=wa_number, last_message=text, last_direction="out",
++                    message_count=1, unread_count=0, status="open",
++                    started_at=now, last_message_at=now,
++                ))
++            else:
++                conv.last_message = text
++                conv.last_direction = "out"
++                conv.message_count = int(conv.message_count or 0) + 1
++                conv.unread_count = 0
++                conv.last_message_at = now
++    except Exception as exc:  # noqa: BLE001
++        logger.debug("SUPPORT | mark_outbound failed for %s: %s", wa_number, exc)
++
++
++def mark_read(wa_number: str) -> None:
++    """Clear the unread counter for a conversation (opened in the console)."""
++    try:
++        with session_scope() as session:
++            conv = (
++                session.query(DashConversation)
++                .filter(DashConversation.wa_number == wa_number)
++                .first()
++            )
++            if conv is not None:
++                conv.unread_count = 0
++    except Exception as exc:  # noqa: BLE001
++        logger.debug("SUPPORT | mark_read failed for %s: %s", wa_number, exc)
++
++
++def record_status(wa_message_id: str, status: str, wa_number: str = "", timestamp: str = "") -> None:
++    """Persist a WhatsApp status receipt and update the admin message's status."""
++    if not wa_message_id or not status:
++        return
++    now = _now_iso()
++    try:
++        with session_scope() as session:
++            session.add(
++                MessageStatus(
++                    wa_message_id=wa_message_id, wa_number=wa_number or None,
++                    status=status, timestamp=timestamp or None, created_at=now,
++                )
++            )
++            obj = (
++                session.query(AdminMessage)
++                .filter(AdminMessage.wa_message_id == wa_message_id)
++                .first()
++            )
++            if obj is not None and _status_rank(status) >= _status_rank(obj.status):
++                obj.status = status
++    except Exception as exc:  # noqa: BLE001 - status tracking must never break webhook
++        logger.debug("SUPPORT | record_status failed for %s: %s", wa_message_id, exc)
++
++
++_STATUS_ORDER = {"queued": 0, "sent": 1, "delivered": 2, "read": 3, "failed": 4}
++
++
++def _status_rank(status: Optional[str]) -> int:
++    return _STATUS_ORDER.get(status or "", 0)
++
++
++# --------------------------------------------------------------------------- #
++# Merged timeline
++# --------------------------------------------------------------------------- #
++def _admin_msg_to_dict(obj: AdminMessage) -> Dict[str, Any]:
++    return {
++        "source": "admin",
++        "id": f"a{obj.id}",
++        "direction": "out",
++        "sender": "admin",
++        "type": obj.msg_type,
++        "text": obj.body or "",
++        "media_id": obj.media_id,
++        "filename": obj.filename,
++        "mime_type": obj.mime_type,
++        "status": obj.status,
++        "admin_user": obj.admin_user,
++        "created_at": obj.created_at,
++    }
++
++
++def thread(wa_number: str, limit: int = 500) -> List[Dict[str, Any]]:
++    """Return the merged customer↔bot↔admin timeline, oldest first.
++
++    Combines the existing ``messages`` table (customer 'in' + bot 'out') with
++    ``admin_messages`` (console 'out'), sorted by ISO ``created_at``.
++    """
++    items: List[Dict[str, Any]] = []
++    with session_scope() as session:
++        msgs = (
++            session.query(DashMessage)
++            .filter(DashMessage.wa_number == wa_number)
++            .order_by(DashMessage.id.desc())
++            .limit(limit)
++            .all()
++        )
++        for m in msgs:
++            items.append({
++                "source": "bot" if m.direction == "out" else "customer",
++                "id": f"m{m.id}",
++                "direction": m.direction,
++                "sender": "bot" if m.direction == "out" else "customer",
++                "type": "text",
++                "text": m.text or "",
++                "media_id": None,
++                "filename": None,
++                "mime_type": None,
++                "status": None,
++                "admin_user": None,
++                "created_at": m.created_at,
++            })
++        admins = (
++            session.query(AdminMessage)
++            .filter(AdminMessage.wa_number == wa_number)
++            .order_by(AdminMessage.id.desc())
++            .limit(limit)
++            .all()
++        )
++        items.extend(_admin_msg_to_dict(a) for a in admins)
++    # ISO-8601 strings sort chronologically as plain strings.
++    items.sort(key=lambda x: (x.get("created_at") or ""))
++    return items[-limit:]
++
++
++# --------------------------------------------------------------------------- #
++# Enriched inbox
++# --------------------------------------------------------------------------- #
++def inbox(search: str = "", status_filter: str = "", only_unread: bool = False,
++          limit: int = 200) -> List[Dict[str, Any]]:
++    """Return the console inbox: conversations enriched with AI mode + assignment."""
++    with session_scope() as session:
++        q = session.query(DashConversation)
++        if search:
++            like = f"%{search}%"
++            q = q.filter(
++                (DashConversation.wa_number.like(like))
++                | (DashConversation.profile_name.like(like))
++            )
++        if only_unread:
++            q = q.filter(DashConversation.unread_count > 0)
++        rows = q.order_by(DashConversation.last_message_at.desc()).limit(limit).all()
++
++        # Pull settings + assignments in bulk to avoid N+1.
++        settings = {s.wa_number: s for s in session.query(ConversationSettings).all()}
++        assigns = {a.wa_number: a for a in session.query(ConversationAssignment).all()}
++
++        out: List[Dict[str, Any]] = []
++        for r in rows:
++            s = settings.get(r.wa_number)
++            a = assigns.get(r.wa_number)
++            conv_status = s.status if s else "open"
++            if status_filter and conv_status != status_filter:
++                continue
++            out.append({
++                "wa_number": r.wa_number,
++                "profile_name": r.profile_name or "",
++                "last_message": r.last_message or "",
++                "last_direction": r.last_direction or "",
++                "last_message_at": r.last_message_at,
++                "unread_count": int(r.unread_count or 0),
++                "message_count": int(r.message_count or 0),
++                "status": conv_status,
++                "ai_enabled": bool(s.ai_enabled) if s else True,
++                "assigned_to": a.assigned_to if a else None,
++            })
++        return out
++
++
++# --------------------------------------------------------------------------- #
++# Live statistics
++# --------------------------------------------------------------------------- #
++def live_stats() -> Dict[str, int]:
++    """Return the console's live counters."""
++    today = _today_start_iso()
++    online_since = _minutes_ago_iso(5)
++    with session_scope() as session:
++        customers_online = (
++            session.query(func.count(DashConversation.id))
++            .filter(DashConversation.last_message_at >= online_since)
++            .scalar()
++        ) or 0
++        pending_replies = (
++            session.query(func.count(DashConversation.id))
++            .filter(DashConversation.last_direction == "in")
++            .scalar()
++        ) or 0
++        todays_messages = (
++            session.query(func.count(DashMessage.id))
++            .filter(DashMessage.created_at >= today)
++            .scalar()
++        ) or 0
++        todays_orders = (
++            session.query(func.count(DashOrder.id))
++            .filter(DashOrder.looked_up_at >= today)
++            .scalar()
++        ) or 0
++        manual_replies = (
++            session.query(func.count(AdminMessage.id))
++            .filter(AdminMessage.created_at >= today)
++            .scalar()
++        ) or 0
++        # AI replies today = bot outbound messages today.
++        ai_replies = (
++            session.query(func.count(DashMessage.id))
++            .filter(DashMessage.created_at >= today, DashMessage.direction == "out")
++            .scalar()
++        ) or 0
++    return {
++        "customers_online": int(customers_online),
++        "pending_replies": int(pending_replies),
++        "todays_messages": int(todays_messages),
++        "todays_orders": int(todays_orders),
++        "ai_replies": int(ai_replies),
++        "manual_replies": int(manual_replies),
++    }
++
++
++# --------------------------------------------------------------------------- #
++# Customer profile
++# --------------------------------------------------------------------------- #
++def _to_float(value: Any) -> float:
++    try:
++        return float(str(value).replace(",", "").strip() or 0)
++    except (TypeError, ValueError):
++        return 0.0
++
++
++def customer_profile(wa_number: str) -> Dict[str, Any]:
++    """Return the customer profile card shown beside the chat."""
++    with session_scope() as session:
++        cust = (
++            session.query(DashCustomer)
++            .filter(DashCustomer.wa_number == wa_number)
++            .first()
++        )
++        conv = (
++            session.query(DashConversation)
++            .filter(DashConversation.wa_number == wa_number)
++            .first()
++        )
++        orders = (
++            session.query(DashOrder)
++            .filter(DashOrder.wa_number == wa_number)
++            .order_by(DashOrder.id.desc())
++            .all()
++        )
++
++    # Deduplicate orders by order_name for count + spend.
++    seen: Dict[str, float] = {}
++    last_order = None
++    for o in orders:
++        name = o.order_name or f"#{o.id}"
++        if name not in seen:
++            seen[name] = _to_float(o.total_price)
++        if last_order is None:
++            last_order = {
++                "order_name": o.order_name,
++                "total_price": o.total_price,
++                "currency": o.currency,
++                "financial_status": o.financial_status,
++                "fulfillment_status": o.fulfillment_status,
++                "looked_up_at": o.looked_up_at,
++            }
++
++    return {
++        "wa_number": wa_number,
++        "profile_name": (cust.profile_name if cust else None) or (conv.profile_name if conv else None) or "",
++        "language": (cust.language if cust else None) or "",
++        "email": (cust.email if cust else None) or "",
++        "first_seen_at": cust.first_seen_at if cust else None,
++        "last_seen_at": cust.last_seen_at if cust else (conv.last_message_at if conv else None),
++        "order_count": len(seen),
++        "total_spend": round(sum(seen.values()), 2),
++        "last_order": last_order,
++        "conversation_count": 1 if conv else 0,
++        "message_count": int(conv.message_count) if conv else 0,
++        "ai_enabled": get_settings(wa_number)["ai_enabled"],
++        "status": get_settings(wa_number)["status"],
++        "assigned_to": get_assignment(wa_number),
++    }
++
++
++__all__ = [
++    "get_settings", "is_manual_mode", "set_ai_enabled", "set_status",
++    "assign", "get_assignment", "add_note", "list_notes",
++    "record_admin_message", "record_status", "thread", "inbox",
++    "live_stats", "customer_profile",
++]
+diff --git a/admin/support_routes.py b/admin/support_routes.py
+new file mode 100644
+index 0000000..7947666
+--- /dev/null
++++ b/admin/support_routes.py
+@@ -0,0 +1,422 @@
++"""
++admin/support_routes.py
++-----------------------
++Flask blueprint for the v10.2 real-time WhatsApp Support Console.
++
++Mounted at ``/admin/support``. Every route requires an authenticated admin
++(``login_required``); every state-changing route enforces CSRF
++(``csrf_protect``) and a per-admin rate limit, validates its input, and writes an
++audit row. The blueprint is intentionally thin — all logic lives in
++:mod:`admin.support_console` (data) and :mod:`whatsapp.support_sender` (sending).
++
++No existing route, template or behaviour is modified; this is purely additive.
++"""
++
++from __future__ import annotations
++
++from typing import Any, Dict, Tuple
++
++from flask import (
++    Blueprint,
++    jsonify,
++    render_template,
++    request,
++    session,
++)
++
++from admin import support_console as sc
++from admin.security import csrf_protect, login_required
++from utils.logging import logger
++from utils.ratelimit import RateLimiter
++
++support_bp = Blueprint("admin_support", __name__, url_prefix="/admin/support")
++
++# Per-admin send rate limit (protects the WhatsApp API + prevents abuse).
++_send_limiter = RateLimiter(max_requests=40, window_seconds=60)
++_action_limiter = RateLimiter(max_requests=120, window_seconds=60)
++
++# Upload constraints (WhatsApp Cloud API media limits, kept conservative).
++_MAX_UPLOAD_BYTES = 16 * 1024 * 1024  # 16 MB
++_ALLOWED_MIME_PREFIXES = ("image/", "audio/", "video/")
++_ALLOWED_DOC_MIMES = {
++    "application/pdf",
++    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
++    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
++    "application/msword",
++    "text/plain",
++}
++
++
++# --------------------------------------------------------------------------- #
++# Helpers
++# --------------------------------------------------------------------------- #
++def _current_user() -> str:
++    return session.get("admin_user") or "admin"
++
++
++def _client_ip() -> str:
++    return (request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
++            or request.remote_addr or "")
++
++
++def _rate_ok(limiter: RateLimiter) -> bool:
++    return limiter.is_allowed(f"{_current_user()}::{request.endpoint}")
++
++
++def _err(message: str, code: int = 400) -> Tuple[Any, int]:
++    return jsonify({"ok": False, "error": message}), code
++
++
++def _valid_wa(wa_number: str) -> bool:
++    """Basic E.164-ish validation: 6–20 digits, optionally leading +."""
++    if not wa_number:
++        return False
++    digits = wa_number[1:] if wa_number.startswith("+") else wa_number
++    return digits.isdigit() and 6 <= len(digits) <= 20
++
++
++# --------------------------------------------------------------------------- #
++# Page
++# --------------------------------------------------------------------------- #
++@support_bp.route("/console", methods=["GET"])
++@support_bp.route("/", methods=["GET"])
++@login_required
++def console() -> Any:
++    """Render the WhatsApp-style support console shell (data loads via AJAX)."""
++    return render_template("admin/support_console.html")
++
++
++# --------------------------------------------------------------------------- #
++# Read APIs (polled every ~3s by the frontend)
++# --------------------------------------------------------------------------- #
++@support_bp.route("/api/inbox", methods=["GET"])
++@login_required
++def api_inbox() -> Any:
++    search = (request.args.get("q") or "").strip()[:64]
++    status_filter = (request.args.get("status") or "").strip()
++    only_unread = request.args.get("unread") in ("1", "true", "yes")
++    rows = sc.inbox(search=search, status_filter=status_filter, only_unread=only_unread)
++    return jsonify({"ok": True, "conversations": rows, "count": len(rows)})
++
++
++@support_bp.route("/api/thread/<wa_number>", methods=["GET"])
++@login_required
++def api_thread(wa_number: str) -> Any:
++    if not _valid_wa(wa_number):
++        return _err("invalid number")
++    if request.args.get("mark_read") in ("1", "true", "yes"):
++        sc.mark_read(wa_number)
++    messages = sc.thread(wa_number)
++    return jsonify({"ok": True, "wa_number": wa_number, "messages": messages})
++
++
++@support_bp.route("/api/profile/<wa_number>", methods=["GET"])
++@login_required
++def api_profile(wa_number: str) -> Any:
++    if not _valid_wa(wa_number):
++        return _err("invalid number")
++    return jsonify({"ok": True, "profile": sc.customer_profile(wa_number)})
++
++
++@support_bp.route("/api/stats", methods=["GET"])
++@login_required
++def api_stats() -> Any:
++    return jsonify({"ok": True, "stats": sc.live_stats()})
++
++
++@support_bp.route("/api/notes/<wa_number>", methods=["GET"])
++@login_required
++def api_list_notes(wa_number: str) -> Any:
++    if not _valid_wa(wa_number):
++        return _err("invalid number")
++    return jsonify({"ok": True, "notes": sc.list_notes(wa_number)})
++
++
++# --------------------------------------------------------------------------- #
++# Manual reply — text / image / document / voice
++# --------------------------------------------------------------------------- #
++@support_bp.route("/api/send/<wa_number>", methods=["POST"])
++@login_required
++@csrf_protect
++def api_send(wa_number: str) -> Any:
++    if not _valid_wa(wa_number):
++        return _err("invalid number")
++    if not _rate_ok(_send_limiter):
++        return _err("rate limit exceeded, slow down", 429)
++
++    from whatsapp import support_sender as ws
++
++    user = _current_user()
++    upload = request.files.get("file")
++
++    # ---- Media send (multipart) ----
++    if upload is not None and upload.filename:
++        content = upload.read()
++        if not content:
++            return _err("empty file")
++        if len(content) > _MAX_UPLOAD_BYTES:
++            return _err("file too large (max 16 MB)", 413)
++        mime = upload.mimetype or ws.guess_mime(upload.filename)
++        caption = (request.form.get("caption") or "").strip()[:1024]
++
++        if mime.startswith("image/"):
++            kind, msg_type = "image", "image"
++        elif mime.startswith("audio/"):
++            kind, msg_type = "audio", "audio"
++        elif mime in _ALLOWED_DOC_MIMES or mime == "application/octet-stream":
++            kind, msg_type = "document", "document"
++        elif mime.startswith(_ALLOWED_MIME_PREFIXES):
++            kind, msg_type = "document", "document"
++        else:
++            return _err(f"unsupported file type: {mime}")
++
++        wamid, media_id = ws.send_media_upload(
++            wa_number, content, mime, kind=kind, filename=upload.filename, caption=caption
++        )
++        status = "sent" if wamid else "failed"
++        rec = sc.record_admin_message(
++            wa_number, user, msg_type=msg_type, body=caption or upload.filename,
++            media_id=media_id, filename=upload.filename, mime_type=mime,
++            wa_message_id=wamid, status=status,
++            error=None if wamid else "whatsapp send failed",
++        )
++        if wamid:
++            sc.mark_outbound(wa_number, f"[{msg_type}] {caption or upload.filename}")
++        sc.audit(user, "send_media", wa_number, f"{msg_type} {upload.filename} -> {status}", _client_ip())
++        return jsonify({"ok": bool(wamid), "message": rec}), (200 if wamid else 502)
++
++    # ---- Text send (JSON or form) ----
++    payload = request.get_json(silent=True) or {}
++    text = (payload.get("text") or request.form.get("text") or "").strip()
++    if not text:
++        return _err("text is required")
++    if len(text) > 4096:
++        text = text[:4096]
++
++    wamid = ws.send_text(wa_number, text)
++    status = "sent" if wamid else "failed"
++    rec = sc.record_admin_message(
++        wa_number, user, msg_type="text", body=text, wa_message_id=wamid,
++        status=status, error=None if wamid else "whatsapp send failed",
++    )
++    if wamid:
++        sc.mark_outbound(wa_number, text)
++    sc.audit(user, "send_text", wa_number, f"len={len(text)} -> {status}", _client_ip())
++    return jsonify({"ok": bool(wamid), "message": rec}), (200 if wamid else 502)
++
++
++# --------------------------------------------------------------------------- #
++# AI toggle / manual mode
++# --------------------------------------------------------------------------- #
++@support_bp.route("/api/ai-toggle/<wa_number>", methods=["POST"])
++@login_required
++@csrf_protect
++def api_ai_toggle(wa_number: str) -> Any:
++    if not _valid_wa(wa_number):
++        return _err("invalid number")
++    if not _rate_ok(_action_limiter):
++        return _err("rate limit exceeded", 429)
++    payload = request.get_json(silent=True) or {}
++    enabled = bool(payload.get("ai_enabled", request.form.get("ai_enabled") == "true"))
++    result = sc.set_ai_enabled(wa_number, enabled, _current_user())
++    sc.audit(_current_user(), "ai_toggle", wa_number,
++             f"ai_enabled={enabled}", _client_ip())
++    return jsonify({"ok": True, **result})
++
++
++# --------------------------------------------------------------------------- #
++# Assignment
++# --------------------------------------------------------------------------- #
++@support_bp.route("/api/assign/<wa_number>", methods=["POST"])
++@login_required
++@csrf_protect
++def api_assign(wa_number: str) -> Any:
++    if not _valid_wa(wa_number):
++        return _err("invalid number")
++    payload = request.get_json(silent=True) or {}
++    assigned_to = (payload.get("assigned_to") or request.form.get("assigned_to") or "").strip() or None
++    if assigned_to == "__me__":
++        assigned_to = _current_user()
++    result = sc.assign(wa_number, assigned_to, _current_user())
++    sc.audit(_current_user(), "assign", wa_number, f"assigned_to={assigned_to}", _client_ip())
++    return jsonify({"ok": True, **result})
++
++
++# --------------------------------------------------------------------------- #
++# Status
++# --------------------------------------------------------------------------- #
++@support_bp.route("/api/status/<wa_number>", methods=["POST"])
++@login_required
++@csrf_protect
++def api_set_status(wa_number: str) -> Any:
++    if not _valid_wa(wa_number):
++        return _err("invalid number")
++    payload = request.get_json(silent=True) or {}
++    status = (payload.get("status") or request.form.get("status") or "open").strip()
++    new_status = sc.set_status(wa_number, status, _current_user())
++    sc.audit(_current_user(), "set_status", wa_number, new_status, _client_ip())
++    return jsonify({"ok": True, "status": new_status})
++
++
++# --------------------------------------------------------------------------- #
++# Internal notes
++# --------------------------------------------------------------------------- #
++@support_bp.route("/api/notes/<wa_number>", methods=["POST"])
++@login_required
++@csrf_protect
++def api_add_note(wa_number: str) -> Any:
++    if not _valid_wa(wa_number):
++        return _err("invalid number")
++    payload = request.get_json(silent=True) or {}
++    note = (payload.get("note") or request.form.get("note") or "").strip()
++    if not note:
++        return _err("note is required")
++    try:
++        created = sc.add_note(wa_number, _current_user(), note)
++    except ValueError as exc:
++        return _err(str(exc))
++    sc.audit(_current_user(), "add_note", wa_number, f"len={len(note)}", _client_ip())
++    return jsonify({"ok": True, "note": created})
++
++
++# --------------------------------------------------------------------------- #
++# Shopify — search, product card, draft order
++# --------------------------------------------------------------------------- #
++@support_bp.route("/api/shopify/search", methods=["GET"])
++@login_required
++def api_shopify_search() -> Any:
++    query = (request.args.get("q") or "").strip()[:120]
++    if not query:
++        return jsonify({"ok": True, "products": []})
++    try:
++        from shopify.search import search_products
++
++        matches = search_products(query_text=query, limit=8)
++        products = [m.to_card_dict() for m in matches]
++        return jsonify({"ok": True, "products": products})
++    except Exception as exc:  # noqa: BLE001
++        logger.error("SUPPORT | shopify search failed: %s", exc)
++        return jsonify({"ok": True, "products": [], "warning": "search unavailable"})
++
++
++@support_bp.route("/api/shopify/send-card/<wa_number>", methods=["POST"])
++@login_required
++@csrf_protect
++def api_shopify_send_card(wa_number: str) -> Any:
++    if not _valid_wa(wa_number):
++        return _err("invalid number")
++    if not _rate_ok(_send_limiter):
++        return _err("rate limit exceeded", 429)
++    payload = request.get_json(silent=True) or {}
++    query = (payload.get("query") or "").strip()[:120]
++    if not query:
++        return _err("query is required")
++    try:
++        from shopify.search import search_products
++        from whatsapp.sender import send_products
++
++        matches = search_products(query_text=query, limit=3)
++        if not matches:
++            return _err("no products found", 404)
++        cards = [m.to_card_dict() for m in matches]
++        ok = send_products(wa_number, cards)
++        summary = ", ".join(c.get("title", "") for c in cards)[:280]
++        sc.record_admin_message(
++            wa_number, _current_user(), msg_type="text",
++            body=f"[product cards] {summary}", status="sent" if ok else "failed",
++        )
++        if ok:
++            sc.mark_outbound(wa_number, f"[products] {summary}")
++        sc.audit(_current_user(), "send_product_card", wa_number, summary, _client_ip())
++        return jsonify({"ok": bool(ok), "sent": len(cards), "titles": [c.get("title") for c in cards]})
++    except Exception as exc:  # noqa: BLE001
++        logger.error("SUPPORT | send-card failed: %s", exc)
++        return _err("failed to send product card", 502)
++
++
++@support_bp.route("/api/shopify/draft-order/<wa_number>", methods=["POST"])
++@login_required
++@csrf_protect
++def api_shopify_draft_order(wa_number: str) -> Any:
++    if not _valid_wa(wa_number):
++        return _err("invalid number")
++    payload = request.get_json(silent=True) or {}
++    line_items = payload.get("line_items") or []
++    if not isinstance(line_items, list) or not line_items:
++        return _err("line_items (list of {variant_id, quantity}) is required")
++    try:
++        from shopify.orders import create_draft_order
++
++        result = create_draft_order(line_items)
++        if not result or not result.get("invoice_url"):
++            return _err("could not create draft order", 502)
++        sc.audit(_current_user(), "draft_order", wa_number,
++                 result.get("draft_order_id", ""), _client_ip())
++        return jsonify({"ok": True, **result})
++    except Exception as exc:  # noqa: BLE001
++        logger.error("SUPPORT | draft order failed: %s", exc)
++        return _err("draft order failed", 502)
++
++
++# --------------------------------------------------------------------------- #
++# Payment link
++# --------------------------------------------------------------------------- #
++@support_bp.route("/api/payment/link/<wa_number>", methods=["POST"])
++@login_required
++@csrf_protect
++def api_payment_link(wa_number: str) -> Any:
++    if not _valid_wa(wa_number):
++        return _err("invalid number")
++    payload = request.get_json(silent=True) or {}
++    try:
++        amount = float(payload.get("amount") or 0)
++    except (TypeError, ValueError):
++        return _err("valid amount is required")
++    if amount <= 0:
++        return _err("amount must be > 0")
++    currency = (payload.get("currency") or "INR").strip()[:8]
++    order_ref = (payload.get("order_number") or f"WA-{wa_number[-6:]}").strip()[:40]
++    send_to_customer = bool(payload.get("send", False))
++
++    try:
++        from payments import generate_payment_link
++
++        order = {
++            "id": order_ref, "order_number": order_ref,
++            "currency": currency, "total_amount": amount,
++        }
++        link = generate_payment_link(order)
++        url = link.get("url", "")
++        if not url:
++            return _err("could not generate payment link", 502)
++
++        sent = False
++        if send_to_customer:
++            from whatsapp.support_sender import send_text
++
++            msg = f"Here is your secure payment link for {currency} {amount:.2f}:\n{url}"
++            wamid = send_text(wa_number, msg)
++            sent = bool(wamid)
++            sc.record_admin_message(
++                wa_number, _current_user(), msg_type="text", body=msg,
++                wa_message_id=wamid, status="sent" if wamid else "failed",
++            )
++            if wamid:
++                sc.mark_outbound(wa_number, "[payment link]")
++        sc.audit(_current_user(), "payment_link", wa_number,
++                 f"{currency} {amount} via {link.get('provider')}", _client_ip())
++        return jsonify({"ok": True, "sent": sent, **link})
++    except Exception as exc:  # noqa: BLE001
++        logger.error("SUPPORT | payment link failed: %s", exc)
++        return _err("payment link failed", 502)
++
++
++def init_support_console(app) -> None:
++    """Register the support-console blueprint on the Flask app (idempotent)."""
++    if "admin_support.console" in app.view_functions:
++        return
++    app.register_blueprint(support_bp)
++    logger.info("SUPPORT | Live support console mounted at /admin/support/console")
++
++
++__all__ = ["support_bp", "init_support_console"]
+diff --git a/admin/templates/admin/base.html b/admin/templates/admin/base.html
+index a845edd..b5c2133 100644
+--- a/admin/templates/admin/base.html
++++ b/admin/templates/admin/base.html
+@@ -20,6 +20,7 @@
+       <div class="nav-section">Overview</div>
+       <a class="nav-link {{ 'active' if nav_active == 'admin.dashboard' }}" href="{{ url_for('admin.dashboard') }}"><i class="bi bi-grid-1x2"></i> Dashboard</a>
+       <a class="nav-link {{ 'active' if nav_active in ['admin.inbox','admin.chat'] }}" href="{{ url_for('admin.inbox') }}"><i class="bi bi-chat-dots"></i> Live Inbox <span class="badge-count" data-unread-badge style="display:none">0</span></a>
++      {% if has_view('admin_support.console') %}<a class="nav-link {{ 'active' if nav_active == 'admin_support.console' }}" href="{{ url_for('admin_support.console') }}"><i class="bi bi-headset"></i> Support Console <span class="badge-count" data-support-unread style="display:none">0</span></a>{% endif %}
+       <a class="nav-link {{ 'active' if nav_active == 'admin.ai_history' }}" href="{{ url_for('admin.ai_history') }}"><i class="bi bi-robot"></i> AI History</a>
+       <div class="nav-section">Commerce</div>
+       {% if commerce_ui %}
+diff --git a/admin/templates/admin/support_console.html b/admin/templates/admin/support_console.html
+new file mode 100644
+index 0000000..ea34dfa
+--- /dev/null
++++ b/admin/templates/admin/support_console.html
+@@ -0,0 +1,156 @@
++{% extends "admin/base.html" %}
++{% block title %}Support Console{% endblock %}
++{% block heading %}Live WhatsApp Support Console{% endblock %}
++{% block content %}
++<link rel="stylesheet" href="{{ url_for('admin.static', filename='support_console.css') }}" />
++
++<div class="sc-root" id="sc-root" data-console-theme="light">
++
++  <!-- Live stat bar -->
++  <div class="sc-stats" id="sc-stats">
++    <div class="sc-stat sc-stat--live"><b data-stat="customers_online">0</b><span>Online</span></div>
++    <div class="sc-stat sc-stat--pending"><b data-stat="pending_replies">0</b><span>Pending</span></div>
++    <div class="sc-stat"><b data-stat="todays_messages">0</b><span>Msgs Today</span></div>
++    <div class="sc-stat"><b data-stat="todays_orders">0</b><span>Orders Today</span></div>
++    <div class="sc-stat"><b data-stat="ai_replies">0</b><span>AI Replies</span></div>
++    <div class="sc-stat"><b data-stat="manual_replies">0</b><span>Manual</span></div>
++    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
++      <button class="sc-icon-btn" id="sc-sound-toggle" title="Toggle sound"><i class="bi bi-volume-up"></i></button>
++      <button class="sc-icon-btn" id="sc-theme-toggle" title="Toggle dark mode"><i class="bi bi-moon-stars"></i></button>
++    </div>
++  </div>
++
++  <!-- Inbox -->
++  <aside class="sc-col sc-col--inbox">
++    <div class="sc-inbox-head">
++      <input class="sc-search" id="sc-search" type="text" placeholder="Search name or number…" />
++      <button class="sc-icon-btn" id="sc-filter-unread" title="Unread only"><i class="bi bi-filter"></i></button>
++    </div>
++    <div class="sc-conv-list" id="sc-conv-list"></div>
++  </aside>
++
++  <!-- Chat -->
++  <main class="sc-col sc-col--chat">
++    <div id="sc-chat-empty" class="sc-empty">
++      <div>
++        <i class="bi bi-chat-heart"></i>
++        <div>Select a conversation to start replying.</div>
++      </div>
++    </div>
++
++    <div id="sc-chat" style="display:none;flex:1;flex-direction:column;min-height:0">
++      <header class="sc-chat-head">
++        <button class="sc-icon-btn" id="sc-back" style="display:none"><i class="bi bi-arrow-left"></i></button>
++        <div class="sc-avatar" id="sc-chat-avatar">?</div>
++        <div class="sc-chat-title">
++          <b id="sc-chat-name">—</b>
++          <small id="sc-chat-number"></small>
++        </div>
++        <div class="sc-chat-actions">
++          <label class="sc-toggle" id="sc-ai-toggle" title="AI on = bot auto-replies; off = manual mode">
++            <span class="sc-switch"></span><span id="sc-ai-label">AI</span>
++          </label>
++          <button class="sc-icon-btn" id="sc-shopify-btn" title="Shopify"><i class="bi bi-bag"></i></button>
++          <button class="sc-icon-btn" id="sc-pay-btn" title="Payment link"><i class="bi bi-credit-card"></i></button>
++        </div>
++      </header>
++
++      <div class="sc-manual-banner" id="sc-manual-banner">
++        <i class="bi bi-hand-index-thumb"></i> Manual mode is ON — the bot will not auto-reply. You are in control.
++      </div>
++
++      <div class="sc-messages" id="sc-messages"></div>
++
++      <!-- Shopify quick panel -->
++      <div id="sc-shopify-panel" style="display:none;padding:8px 12px;border-top:1px solid var(--sc-border);background:var(--sc-panel)">
++        <div class="sc-row">
++          <input class="sc-search" id="sc-shopify-q" placeholder="Search products…" style="flex:1" />
++          <button class="sc-btn" id="sc-shopify-send">Send Cards</button>
++        </div>
++        <div id="sc-shopify-results" style="margin-top:8px"></div>
++      </div>
++
++      <!-- Payment quick panel -->
++      <div id="sc-pay-panel" style="display:none;padding:8px 12px;border-top:1px solid var(--sc-border);background:var(--sc-panel)">
++        <div class="sc-row">
++          <input class="sc-select" id="sc-pay-amount" type="number" min="1" placeholder="Amount" />
++          <input class="sc-select" id="sc-pay-currency" value="INR" style="max-width:80px" />
++          <button class="sc-btn" id="sc-pay-generate">Generate + Send</button>
++        </div>
++        <div id="sc-pay-result" style="margin-top:6px;font-size:12px"></div>
++      </div>
++
++      <!-- Composer -->
++      <div class="sc-composer">
++        <div class="sc-emoji-tray" id="sc-emoji-tray"></div>
++        <div class="sc-attach-preview" id="sc-attach-preview">
++          <i class="bi bi-paperclip"></i><span id="sc-attach-name"></span>
++          <button class="sc-icon-btn" id="sc-attach-clear"><i class="bi bi-x-lg"></i></button>
++        </div>
++        <div class="sc-composer-row">
++          <button class="sc-icon-btn" id="sc-emoji-btn" title="Emoji"><i class="bi bi-emoji-smile"></i></button>
++          <button class="sc-icon-btn" id="sc-attach-btn" title="Attach image / PDF / voice"><i class="bi bi-paperclip"></i></button>
++          <input type="file" id="sc-file" accept="image/*,application/pdf,audio/*" style="display:none" />
++          <textarea class="sc-input" id="sc-text" rows="1" placeholder="Type a message…  (Enter to send)"></textarea>
++          <button class="sc-send" id="sc-send" title="Send"><i class="bi bi-send"></i></button>
++        </div>
++      </div>
++    </div>
++  </main>
++
++  <!-- Profile drawer -->
++  <aside class="sc-col sc-col--profile" id="sc-profile">
++    <div class="sc-profile-head">
++      <div class="sc-avatar" id="sc-prof-avatar">?</div>
++      <b id="sc-prof-name">—</b>
++      <div style="color:var(--sc-muted);font-size:13px" id="sc-prof-number"></div>
++    </div>
++    <div class="sc-profile-section">
++      <h4>Overview</h4>
++      <div class="sc-metric-grid">
++        <div class="sc-metric"><b data-prof="order_count">0</b><small>Orders</small></div>
++        <div class="sc-metric"><b data-prof="total_spend">0</b><small>Spend</small></div>
++        <div class="sc-metric"><b data-prof="message_count">0</b><small>Messages</small></div>
++        <div class="sc-metric"><b data-prof="conversation_count">0</b><small>Convs</small></div>
++      </div>
++      <div class="sc-kv"><span>Language</span><b data-prof="language">—</b></div>
++      <div class="sc-kv"><span>Email</span><b data-prof="email">—</b></div>
++      <div class="sc-kv"><span>Last order</span><b data-prof="last_order">—</b></div>
++    </div>
++    <div class="sc-profile-section">
++      <h4>Assignment &amp; Status</h4>
++      <div class="sc-row">
++        <select class="sc-select" id="sc-assign"></select>
++      </div>
++      <div class="sc-row" style="margin-top:6px">
++        <select class="sc-select" id="sc-status">
++          <option value="open">Open</option>
++          <option value="pending">Pending</option>
++          <option value="closed">Closed</option>
++        </select>
++      </div>
++    </div>
++    <div class="sc-profile-section">
++      <h4>Internal Notes</h4>
++      <div class="sc-notes" id="sc-notes"></div>
++      <textarea class="sc-note-input" id="sc-note-text" rows="2" placeholder="Add an admin-only note…"></textarea>
++      <button class="sc-btn sc-btn--block" id="sc-note-add">Add Note</button>
++    </div>
++  </aside>
++</div>
++
++<audio id="sc-ping" preload="auto"
++  src="data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="></audio>
++{% endblock %}
++
++{% block scripts %}
++<script>
++  window.SC_CONFIG = {
++    base: "{{ url_for('admin_support.console') }}".replace(/\/console$/, ''),
++    csrf: document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
++    me: "{{ session.get('admin_user', 'admin') }}",
++    pollMs: 3000
++  };
++</script>
++<script src="{{ url_for('admin.static', filename='support_console.js') }}"></script>
++{% endblock %}
+diff --git a/alembic/versions/46cbe50493ce_v10_2_support_console_tables.py b/alembic/versions/46cbe50493ce_v10_2_support_console_tables.py
+new file mode 100644
+index 0000000..2f78ccc
+--- /dev/null
++++ b/alembic/versions/46cbe50493ce_v10_2_support_console_tables.py
+@@ -0,0 +1,94 @@
++"""v10.2 support console tables
++
++Revision ID: 46cbe50493ce
++Revises: 765f4874c82b
++Create Date: 2026-07-18 09:26:34.445804
++"""
++from alembic import op
++import sqlalchemy as sa
++
++
++revision = '46cbe50493ce'
++down_revision = '765f4874c82b'
++branch_labels = None
++depends_on = None
++
++
++def upgrade() -> None:
++    # ### commands auto generated by Alembic - please adjust! ###
++    op.create_table('admin_messages',
++    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
++    sa.Column('wa_number', sa.String(length=64), nullable=False),
++    sa.Column('admin_user', sa.String(length=128), nullable=False),
++    sa.Column('direction', sa.String(length=8), nullable=False),
++    sa.Column('msg_type', sa.String(length=16), nullable=False),
++    sa.Column('body', sa.Text(), nullable=True),
++    sa.Column('media_id', sa.String(length=255), nullable=True),
++    sa.Column('media_url', sa.Text(), nullable=True),
++    sa.Column('filename', sa.String(length=255), nullable=True),
++    sa.Column('mime_type', sa.String(length=128), nullable=True),
++    sa.Column('wa_message_id', sa.String(length=128), nullable=True),
++    sa.Column('status', sa.String(length=16), nullable=False),
++    sa.Column('error', sa.Text(), nullable=True),
++    sa.Column('created_at', sa.String(length=64), nullable=False),
++    sa.PrimaryKeyConstraint('id')
++    )
++    op.create_index('idx_admin_messages_created', 'admin_messages', ['created_at'], unique=False)
++    op.create_index('idx_admin_messages_wa', 'admin_messages', ['wa_number'], unique=False)
++    op.create_index('idx_admin_messages_wamid', 'admin_messages', ['wa_message_id'], unique=False)
++    op.create_table('conversation_assignments',
++    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
++    sa.Column('wa_number', sa.String(length=64), nullable=False),
++    sa.Column('assigned_to', sa.String(length=128), nullable=True),
++    sa.Column('assigned_by', sa.String(length=128), nullable=True),
++    sa.Column('created_at', sa.String(length=64), nullable=False),
++    sa.Column('updated_at', sa.String(length=64), nullable=False),
++    sa.PrimaryKeyConstraint('id'),
++    sa.UniqueConstraint('wa_number')
++    )
++    op.create_table('conversation_settings',
++    sa.Column('wa_number', sa.String(length=64), nullable=False),
++    sa.Column('ai_enabled', sa.Boolean(), nullable=False),
++    sa.Column('status', sa.String(length=16), nullable=False),
++    sa.Column('updated_by', sa.String(length=128), nullable=True),
++    sa.Column('created_at', sa.String(length=64), nullable=False),
++    sa.Column('updated_at', sa.String(length=64), nullable=False),
++    sa.PrimaryKeyConstraint('wa_number')
++    )
++    op.create_table('internal_notes',
++    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
++    sa.Column('wa_number', sa.String(length=64), nullable=False),
++    sa.Column('admin_user', sa.String(length=128), nullable=False),
++    sa.Column('note', sa.Text(), nullable=False),
++    sa.Column('created_at', sa.String(length=64), nullable=False),
++    sa.PrimaryKeyConstraint('id')
++    )
++    op.create_index('idx_internal_notes_wa', 'internal_notes', ['wa_number'], unique=False)
++    op.create_table('message_status',
++    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
++    sa.Column('wa_message_id', sa.String(length=128), nullable=False),
++    sa.Column('wa_number', sa.String(length=64), nullable=True),
++    sa.Column('status', sa.String(length=16), nullable=False),
++    sa.Column('timestamp', sa.String(length=64), nullable=True),
++    sa.Column('created_at', sa.String(length=64), nullable=False),
++    sa.PrimaryKeyConstraint('id')
++    )
++    op.create_index('idx_message_status_wa', 'message_status', ['wa_number'], unique=False)
++    op.create_index('idx_message_status_wamid', 'message_status', ['wa_message_id'], unique=False)
++    # ### end Alembic commands ###
++
++
++def downgrade() -> None:
++    # ### commands auto generated by Alembic - please adjust! ###
++    op.drop_index('idx_message_status_wamid', table_name='message_status')
++    op.drop_index('idx_message_status_wa', table_name='message_status')
++    op.drop_table('message_status')
++    op.drop_index('idx_internal_notes_wa', table_name='internal_notes')
++    op.drop_table('internal_notes')
++    op.drop_table('conversation_settings')
++    op.drop_table('conversation_assignments')
++    op.drop_index('idx_admin_messages_wamid', table_name='admin_messages')
++    op.drop_index('idx_admin_messages_wa', table_name='admin_messages')
++    op.drop_index('idx_admin_messages_created', table_name='admin_messages')
++    op.drop_table('admin_messages')
++    # ### end Alembic commands ###
+diff --git a/app.py b/app.py
+index 7279245..1c657e2 100644
+--- a/app.py
++++ b/app.py
+@@ -155,6 +155,16 @@ except Exception as exc:  # noqa: BLE001 - observability is optional
+ # blueprint + session config; does not touch any existing route or behaviour.
+ init_admin(app)
+ 
++# v10.2 Real-time WhatsApp Support Console (additive). Mounts the live console
++# blueprint at /admin/support. Fully guarded so any failure leaves the rest of
++# the admin dashboard and the core bot untouched.
++try:
++    from admin.support_routes import init_support_console
++
++    init_support_console(app)
++except Exception as exc:  # noqa: BLE001 - console is additive; never break startup
++    logger.error("SUPPORT | Live support console unavailable: %s", exc)
++
+ # v6.0 Enterprise Commerce (additive). Guarded exactly like the admin/database
+ # modules so any commerce failure can never prevent the core app from starting.
+ # Registers the JSON order/tracking API + admin Orders dashboard, ensures the
+@@ -620,6 +630,21 @@ def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) ->
+     # Admin dashboard: record the inbound customer message (best-effort, guarded).
+     admin_tracker.record_inbound(wa_number, clean_text, profile_name, language)
+ 
++    # v10.2: Manual Mode gate. If an admin has taken over this conversation in
++    # the live support console (AI toggled OFF), the bot must NOT auto-reply. The
++    # inbound message is already recorded above, so it still appears live in the
++    # console for the admin to answer manually. Fully guarded: any failure here
++    # falls through to normal AI behaviour so the bot can never be silenced by a
++    # database hiccup.
++    try:
++        from admin import support_console as _support
++
++        if _support.is_manual_mode(wa_number):
++            logger.info("SUPPORT | Manual mode active for %s; auto-reply suppressed", wa_number)
++            return
++    except Exception as exc:  # noqa: BLE001 - manual-mode check must never break the bot
++        logger.debug("SUPPORT | manual-mode check skipped: %s", exc)
++
+     # 1. Pagination — "more" / "next" while a product search is active.
+     if _is_more_request(clean_text) and conversation_memory.has_active_search(wa_number):
+         _send_next_product_page(wa_number, start_time)
+diff --git a/database/models.py b/database/models.py
+index 186bcb4..7439008 100644
+--- a/database/models.py
++++ b/database/models.py
+@@ -909,3 +909,17 @@ from database.models_admin import (  # noqa: E402,F401
+     OAuthState,
+     ShopToken,
+ )
++
++
++# --------------------------------------------------------------------------- #
++# v10.2: register the real-time Support Console tables on the same Base so a
++# single create_all / Alembic migration covers them (additive; no existing
++# table is modified).
++# --------------------------------------------------------------------------- #
++from database.models_support import (  # noqa: E402,F401
++    AdminMessage,
++    ConversationAssignment,
++    ConversationSettings,
++    InternalNote,
++    MessageStatus,
++)
+diff --git a/database/models_support.py b/database/models_support.py
+new file mode 100644
+index 0000000..1fbb069
+--- /dev/null
++++ b/database/models_support.py
+@@ -0,0 +1,135 @@
++"""
++database/models_support.py
++--------------------------
++ORM models for the v10.2 real-time WhatsApp Support Console.
++
++These are **new, additive** tables — no existing table is modified. They are
++registered on the ONE shared ``Base`` (imported at the end of
++``database.models``) so a single ``create_all`` / Alembic migration covers them
++on both SQLite and PostgreSQL.
++
++Tables
++    conversation_settings     per-conversation AI toggle + status
++    admin_messages            messages sent BY an admin from the console
++    conversation_assignments  which admin owns a conversation
++    internal_notes            admin-only notes (never shown to the customer)
++    message_status            WhatsApp delivery/read receipts (wamid -> status)
++
++Timestamps are stored as ISO-8601 **strings** (`String`) to match the existing
++dashboard tables (`messages.created_at`, etc.), so the console can merge admin
++messages with the existing `messages` timeline by a simple lexicographic sort.
++"""
++
++from __future__ import annotations
++
++from typing import Optional
++
++from sqlalchemy import Boolean, Index, Integer, String, Text
++from sqlalchemy.orm import Mapped, mapped_column
++
++from database.db import Base
++
++
++class ConversationSettings(Base):
++    """Per-conversation console settings: the AI on/off toggle and status.
++
++    ``ai_enabled=False`` puts the conversation in **Manual Mode**: the webhook
++    handler stops the bot from auto-replying and the admin drives the chat.
++    """
++
++    __tablename__ = "conversation_settings"
++
++    wa_number: Mapped[str] = mapped_column(String(64), primary_key=True)
++    ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
++    status: Mapped[str] = mapped_column(String(16), default="open", nullable=False)  # open|pending|closed
++    updated_by: Mapped[Optional[str]] = mapped_column(String(128))
++    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
++    updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
++
++
++class AdminMessage(Base):
++    """A message sent by an admin from the console (text / image / doc / voice).
++
++    Recorded separately from the bot/customer ``messages`` table so we keep rich
++    metadata (which admin, media id, WhatsApp message id, delivery status). The
++    console renders a merged timeline of ``messages`` + ``admin_messages``.
++    """
++
++    __tablename__ = "admin_messages"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    wa_number: Mapped[str] = mapped_column(String(64), nullable=False)
++    admin_user: Mapped[str] = mapped_column(String(128), nullable=False)
++    direction: Mapped[str] = mapped_column(String(8), default="out", nullable=False)
++    msg_type: Mapped[str] = mapped_column(String(16), default="text", nullable=False)  # text|image|document|audio
++    body: Mapped[Optional[str]] = mapped_column(Text)          # text or media caption
++    media_id: Mapped[Optional[str]] = mapped_column(String(255))  # Meta media id
++    media_url: Mapped[Optional[str]] = mapped_column(Text)     # optional public url
++    filename: Mapped[Optional[str]] = mapped_column(String(255))
++    mime_type: Mapped[Optional[str]] = mapped_column(String(128))
++    wa_message_id: Mapped[Optional[str]] = mapped_column(String(128))  # wamid
++    status: Mapped[str] = mapped_column(String(16), default="queued", nullable=False)  # queued|sent|delivered|read|failed
++    error: Mapped[Optional[str]] = mapped_column(Text)
++    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
++
++    __table_args__ = (
++        Index("idx_admin_messages_wa", "wa_number"),
++        Index("idx_admin_messages_created", "created_at"),
++        Index("idx_admin_messages_wamid", "wa_message_id"),
++    )
++
++
++class ConversationAssignment(Base):
++    """The admin currently responsible for a conversation (one active per wa)."""
++
++    __tablename__ = "conversation_assignments"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    wa_number: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
++    assigned_to: Mapped[Optional[str]] = mapped_column(String(128))
++    assigned_by: Mapped[Optional[str]] = mapped_column(String(128))
++    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
++    updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
++
++
++class InternalNote(Base):
++    """Admin-only note attached to a conversation. Never sent to the customer."""
++
++    __tablename__ = "internal_notes"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    wa_number: Mapped[str] = mapped_column(String(64), nullable=False)
++    admin_user: Mapped[str] = mapped_column(String(128), nullable=False)
++    note: Mapped[str] = mapped_column(Text, nullable=False)
++    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
++
++    __table_args__ = (
++        Index("idx_internal_notes_wa", "wa_number"),
++    )
++
++
++class MessageStatus(Base):
++    """A WhatsApp delivery/read receipt for an outbound message (from webhooks)."""
++
++    __tablename__ = "message_status"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    wa_message_id: Mapped[str] = mapped_column(String(128), nullable=False)
++    wa_number: Mapped[Optional[str]] = mapped_column(String(64))
++    status: Mapped[str] = mapped_column(String(16), nullable=False)  # sent|delivered|read|failed
++    timestamp: Mapped[Optional[str]] = mapped_column(String(64))
++    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
++
++    __table_args__ = (
++        Index("idx_message_status_wamid", "wa_message_id"),
++        Index("idx_message_status_wa", "wa_number"),
++    )
++
++
++__all__ = [
++    "ConversationSettings",
++    "AdminMessage",
++    "ConversationAssignment",
++    "InternalNote",
++    "MessageStatus",
++]
+diff --git a/docs/SUPPORT_CONSOLE.md b/docs/SUPPORT_CONSOLE.md
+new file mode 100644
+index 0000000..c6187ce
+--- /dev/null
++++ b/docs/SUPPORT_CONSOLE.md
+@@ -0,0 +1,76 @@
++# v10.2 — Real-time WhatsApp Support Console
++
++Turns the Admin Dashboard into a live customer-support console with **manual
++live reply**. Fully additive: no existing feature, route, table or API is
++changed. Works on SQLite and PostgreSQL, deploys on Render Free.
++
++Open it at **`/admin/support/console`** (nav link: *Support Console*).
++
++## What it does
++
++- **Live inbox** — every conversation with name, number, last message, last
++  seen, status, unread count. AI/Manual + assignment pills. Polls every 3s.
++- **Live chat** — WhatsApp-style merged timeline (customer left, bot/admin
++  right), day separators, times, delivery/read ticks.
++- **Manual reply** — text, image, PDF and **voice** (uploaded to Meta `/media`
++  then sent by `media_id`). Emoji picker, attachment button, Enter-to-send.
++- **AI toggle per conversation** — turning AI **off** puts the chat in *Manual
++  Mode*: the webhook handler stops the bot from auto-replying (the inbound is
++  still recorded so it shows live) and the admin drives the conversation.
++- **Assignment** — assign a conversation to an admin ("assign to me").
++- **Internal notes** — admin-only, never sent to the customer.
++- **Customer profile** — phone, name, language, order count, last order, total
++  spend, conversation/message counts.
++- **Shopify in chat** — product search, send product cards, create draft order.
++- **Payment** — generate a payment link (existing providers) and optionally
++  send it to the customer on WhatsApp; copy link.
++- **Live stats** — customers online, pending replies, today's messages/orders,
++  AI replies, manual replies.
++- **Notifications** — browser notification + sound + unread nav badge.
++- **UI** — WhatsApp-Business styling, light/dark mode, responsive, animations.
++
++## Architecture
++
++| Layer | File |
++|---|---|
++| ORM tables (additive) | `database/models_support.py` |
++| Migration | `alembic/versions/*_v10_2_support_console_tables.py` |
++| Service (data/logic) | `admin/support_console.py` |
++| HTTP blueprint (`/admin/support`) | `admin/support_routes.py` |
++| WhatsApp media send (returns wamid) | `whatsapp/support_sender.py` |
++| Manual-mode gate | `app.py` (after `record_inbound`) |
++| Delivery/read receipts | `whatsapp/webhook.py` (`_process_status_updates`) |
++| Frontend | `admin/templates/admin/support_console.html`, `admin/static/support_console.{css,js}` |
++
++New tables: `conversation_settings` (AI toggle + status), `admin_messages`
++(console sends), `conversation_assignments`, `internal_notes`, `message_status`.
++
++## Real-time model
++
++Polling every ~3s (`/api/inbox`, `/api/stats`, and `/api/thread/<wa>` when a
++chat is open). This is deliberate: it needs no async worker and works on the
++Render Free sync Gunicorn worker. Delivery/read ticks come from WhatsApp status
++webhooks persisted to `message_status`.
++
++## Security
++
++Every route requires an authenticated admin (`login_required`). Every
++state-changing route enforces CSRF (`csrf_protect`), a per-admin rate limit,
++input validation (E.164 number check, upload size/type limits), and writes a
++tamper-evident audit row (`audit_logs`). Uploads capped at 16 MB with a MIME
++allowlist.
++
++## APIs (all under `/admin/support/api`)
++
++`GET inbox`, `GET thread/<wa>`, `GET profile/<wa>`, `GET stats`,
++`GET/POST notes/<wa>`, `POST send/<wa>` (text or multipart media),
++`POST ai-toggle/<wa>`, `POST assign/<wa>`, `POST status/<wa>`,
++`GET shopify/search`, `POST shopify/send-card/<wa>`,
++`POST shopify/draft-order/<wa>`, `POST payment/link/<wa>`.
++
++## Deploy notes
++
++No new dependencies and no deployment change beyond running the migration
++(`alembic upgrade head`, already in `render.yaml`'s start command). Manual-mode
++state, notes, assignments and admin messages persist in the database, so they
++survive restarts and are shared across workers.
+diff --git a/whatsapp/support_sender.py b/whatsapp/support_sender.py
+new file mode 100644
+index 0000000..fdcf320
+--- /dev/null
++++ b/whatsapp/support_sender.py
+@@ -0,0 +1,233 @@
++"""
++whatsapp/support_sender.py
++--------------------------
++Outbound WhatsApp Cloud API helpers for the Admin Support Console (v10.2).
++
++These complement — and never modify — the existing :mod:`whatsapp.sender`. The
++difference is that every send here returns the **WhatsApp message id (wamid)**
++so the console can track delivery/read status, and media (image / PDF / voice)
++is uploaded to Meta's ``/media`` endpoint first and then sent by ``media_id``
++(no public file hosting required).
++
++Public API
++    upload_media(content, mime_type, filename) -> media_id | None
++    send_text(to, text)                         -> wamid | None
++    send_image(to, media_id, caption)           -> wamid | None
++    send_document(to, media_id, filename, cap)  -> wamid | None
++    send_audio(to, media_id)                    -> wamid | None
++    send_media_upload(to, content, mime, ...)   -> (wamid, media_id) convenience
++
++All functions are exception-guarded and return ``None`` on failure (with a
++logged reason), so a send failure can never crash the console request.
++"""
++
++from __future__ import annotations
++
++import mimetypes
++from typing import Optional, Tuple
++
++import requests
++
++from config import config
++from utils.logging import logger
++
++# WhatsApp Graph API bases (built from the same config the sender uses).
++_GRAPH = "https://graph.facebook.com"
++
++
++def _base_url() -> str:
++    return f"{_GRAPH}/{config.whatsapp_api_version}/{config.phone_number_id}"
++
++
++def _auth_header() -> dict:
++    return {"Authorization": f"Bearer {config.whatsapp_token}"}
++
++
++def _configured() -> bool:
++    if not config.whatsapp_token or not config.phone_number_id:
++        logger.error("WHATSAPP | Missing WHATSAPP_TOKEN/PHONE_NUMBER_ID; cannot send")
++        return False
++    return True
++
++
++def _timeout() -> float:
++    return float(getattr(config, "request_timeout_seconds", 15) or 15)
++
++
++def _extract_wamid(payload: dict) -> Optional[str]:
++    """Pull the message id out of a successful send response."""
++    try:
++        messages = payload.get("messages") or []
++        if messages and isinstance(messages, list):
++            return messages[0].get("id")
++    except Exception:  # noqa: BLE001
++        pass
++    return None
++
++
++def _post_message(body: dict) -> Optional[str]:
++    """POST a /messages body and return the wamid (or None on failure)."""
++    if not _configured():
++        return None
++    headers = {**_auth_header(), "Content-Type": "application/json"}
++    try:
++        resp = requests.post(
++            f"{_base_url()}/messages", headers=headers, json=body, timeout=_timeout()
++        )
++    except requests.RequestException as exc:
++        logger.error("WHATSAPP | send request failed: %s", exc)
++        return None
++    if resp.status_code >= 400:
++        logger.error("WHATSAPP | send failed (%d): %s", resp.status_code, resp.text[:500])
++        return None
++    wamid = _extract_wamid(resp.json() if resp.content else {})
++    if not wamid:
++        logger.warning("WHATSAPP | send ok but no wamid in response")
++    return wamid
++
++
++# --------------------------------------------------------------------------- #
++# Media upload
++# --------------------------------------------------------------------------- #
++def upload_media(content: bytes, mime_type: str, filename: str = "upload") -> Optional[str]:
++    """Upload media bytes to Meta and return the resulting ``media_id``.
++
++    Args:
++        content: Raw file bytes.
++        mime_type: MIME type, e.g. ``image/jpeg``, ``application/pdf``,
++            ``audio/ogg``.
++        filename: A filename hint for the multipart part.
++
++    Returns:
++        The Meta ``media_id`` string, or ``None`` on failure.
++    """
++    if not _configured():
++        return None
++    if not content:
++        logger.error("WHATSAPP | upload_media called with empty content")
++        return None
++    files = {
++        "file": (filename, content, mime_type),
++        "messaging_product": (None, "whatsapp"),
++        "type": (None, mime_type),
++    }
++    try:
++        resp = requests.post(
++            f"{_base_url()}/media", headers=_auth_header(), files=files, timeout=_timeout() * 2
++        )
++    except requests.RequestException as exc:
++        logger.error("WHATSAPP | media upload failed: %s", exc)
++        return None
++    if resp.status_code >= 400:
++        logger.error("WHATSAPP | media upload error (%d): %s", resp.status_code, resp.text[:500])
++        return None
++    media_id = (resp.json() if resp.content else {}).get("id")
++    if not media_id:
++        logger.error("WHATSAPP | media upload returned no id")
++        return None
++    logger.info("WHATSAPP | media uploaded id=%s (%s)", media_id, mime_type)
++    return media_id
++
++
++def guess_mime(filename: str, fallback: str = "application/octet-stream") -> str:
++    """Best-effort MIME type from a filename."""
++    mime, _ = mimetypes.guess_type(filename)
++    return mime or fallback
++
++
++# --------------------------------------------------------------------------- #
++# Typed sends (each returns a wamid)
++# --------------------------------------------------------------------------- #
++def send_text(to_number: str, text: str) -> Optional[str]:
++    """Send a plain text message; returns the wamid."""
++    if not text:
++        return None
++    body = {
++        "messaging_product": "whatsapp",
++        "recipient_type": "individual",
++        "to": to_number,
++        "type": "text",
++        "text": {"preview_url": True, "body": text[:4096]},
++    }
++    return _post_message(body)
++
++
++def send_image(to_number: str, media_id: str, caption: str = "") -> Optional[str]:
++    """Send an image by uploaded ``media_id`` (optional caption)."""
++    image: dict = {"id": media_id}
++    if caption:
++        image["caption"] = caption[:1024]
++    body = {
++        "messaging_product": "whatsapp",
++        "to": to_number,
++        "type": "image",
++        "image": image,
++    }
++    return _post_message(body)
++
++
++def send_document(
++    to_number: str, media_id: str, filename: str = "document.pdf", caption: str = ""
++) -> Optional[str]:
++    """Send a document (e.g. PDF) by uploaded ``media_id``."""
++    document: dict = {"id": media_id, "filename": filename}
++    if caption:
++        document["caption"] = caption[:1024]
++    body = {
++        "messaging_product": "whatsapp",
++        "to": to_number,
++        "type": "document",
++        "document": document,
++    }
++    return _post_message(body)
++
++
++def send_audio(to_number: str, media_id: str) -> Optional[str]:
++    """Send a voice note / audio by uploaded ``media_id``."""
++    body = {
++        "messaging_product": "whatsapp",
++        "to": to_number,
++        "type": "audio",
++        "audio": {"id": media_id},
++    }
++    return _post_message(body)
++
++
++def send_media_upload(
++    to_number: str,
++    content: bytes,
++    mime_type: str,
++    *,
++    kind: str,
++    filename: str = "upload",
++    caption: str = "",
++) -> Tuple[Optional[str], Optional[str]]:
++    """Upload media then send it in one step.
++
++    Args:
++        kind: One of ``"image"``, ``"document"``, ``"audio"``.
++
++    Returns:
++        ``(wamid, media_id)`` — either may be ``None`` on failure.
++    """
++    media_id = upload_media(content, mime_type, filename)
++    if not media_id:
++        return None, None
++    if kind == "image":
++        wamid = send_image(to_number, media_id, caption)
++    elif kind == "audio":
++        wamid = send_audio(to_number, media_id)
++    else:  # document / pdf / anything else
++        wamid = send_document(to_number, media_id, filename, caption)
++    return wamid, media_id
++
++
++__all__ = [
++    "upload_media",
++    "guess_mime",
++    "send_text",
++    "send_image",
++    "send_document",
++    "send_audio",
++    "send_media_upload",
++]
+diff --git a/whatsapp/webhook.py b/whatsapp/webhook.py
+index 237c423..3710bd9 100644
+--- a/whatsapp/webhook.py
++++ b/whatsapp/webhook.py
+@@ -209,13 +209,29 @@ def _resolve_tenant(value: Dict[str, Any]) -> None:
+ 
+ 
+ def _process_status_updates(value: Dict[str, Any]) -> None:
+-    """Log message status updates (sent, delivered, read, failed)."""
++    """Log message status updates and persist them for the support console.
++
++    v10.2: delivery/read receipts (``sent`` -> ``delivered`` -> ``read`` /
++    ``failed``) are persisted against the WhatsApp message id so the live
++    console can show per-message ticks. Persistence is fully guarded and never
++    breaks webhook processing.
++    """
+     for status in value.get("statuses", []):
+         status_type = status.get("status")
+         recipient = status.get("recipient_id")
++        wamid = status.get("id", "")
+         logger.info("STATUS | %s -> %s", recipient, status_type)
+         if status_type == "failed":
+             logger.error("STATUS | Message failed for %s: %s", recipient, status.get("errors", []))
++        try:
++            from admin import support_console as _support
++
++            _support.record_status(
++                wamid, status_type or "", wa_number=recipient or "",
++                timestamp=str(status.get("timestamp", "")),
++            )
++        except Exception as exc:  # noqa: BLE001 - status persistence is best-effort
++            logger.debug("STATUS | persist skipped: %s", exc)
+ 
+ 
+ def _mark_read_best_effort(message_id: str) -> None:
+-- 
+2.43.0
+

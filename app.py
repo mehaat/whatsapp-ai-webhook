@@ -3,7 +3,6 @@ app.py
 ------
 ME-HAAT Fashion AI Bot v10.1 Stable Edition
 Production WhatsApp AI Sales Assistant + Commerce Platform — Shopify OAuth Edition.
-
 v10.1 is a stability release: fixes Shopify OAuth token persistence, unifies the
 database into one mehaat.db, hardens the tracker/event pipeline, and adds richer
 health, per-component logging, and fail-fast startup validation. Zero regression.
@@ -155,6 +154,16 @@ except Exception as exc:  # noqa: BLE001 - observability is optional
 # Login-protected Admin Dashboard at /admin (v4.2, additive). Registers its own
 # blueprint + session config; does not touch any existing route or behaviour.
 init_admin(app)
+
+# v10.2 Real-time WhatsApp Support Console (additive). Mounts the live console
+# blueprint at /admin/support. Fully guarded so any failure leaves the rest of
+# the admin dashboard and the core bot untouched.
+try:
+    from admin.support_routes import init_support_console
+
+    init_support_console(app)
+except Exception as exc:  # noqa: BLE001 - console is additive; never break startup
+    logger.error("SUPPORT | Live support console unavailable: %s", exc)
 
 # v6.0 Enterprise Commerce (additive). Guarded exactly like the admin/database
 # modules so any commerce failure can never prevent the core app from starting.
@@ -620,6 +629,21 @@ def handle_customer_message(wa_number: str, raw_text: str, profile_name: str) ->
 
     # Admin dashboard: record the inbound customer message (best-effort, guarded).
     admin_tracker.record_inbound(wa_number, clean_text, profile_name, language)
+
+    # v10.2: Manual Mode gate. If an admin has taken over this conversation in
+    # the live support console (AI toggled OFF), the bot must NOT auto-reply. The
+    # inbound message is already recorded above, so it still appears live in the
+    # console for the admin to answer manually. Fully guarded: any failure here
+    # falls through to normal AI behaviour so the bot can never be silenced by a
+    # database hiccup.
+    try:
+        from admin import support_console as _support
+
+        if _support.is_manual_mode(wa_number):
+            logger.info("SUPPORT | Manual mode active for %s; auto-reply suppressed", wa_number)
+            return
+    except Exception as exc:  # noqa: BLE001 - manual-mode check must never break the bot
+        logger.debug("SUPPORT | manual-mode check skipped: %s", exc)
 
     # 1. Pagination — "more" / "next" while a product search is active.
     if _is_more_request(clean_text) and conversation_memory.has_active_search(wa_number):

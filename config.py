@@ -1,7 +1,8 @@
 """
 config.py
 ---------
-Central configuration for ME-HAAT Fashion AI Bot v10.1 Stable Edition
+Central configuration for ME-HAAT Fashion AI Bot v6.0 Enterprise Commerce Edition
+
 All environment variables are read once here and exposed as a typed
 ``Config`` object, so the rest of the codebase never calls ``os.environ``
 directly. This makes required-variable validation and testing easier.
@@ -114,12 +115,32 @@ class Config:
         default_factory=lambda: os.environ.get("TOKEN_ENCRYPTION_KEY", "")
     )
 
-    # --- Database (optional, opt-in; SQLite by default, Postgres supported) ---
+    # --- Database (unified layer; backend chosen by DATABASE_URL) ---
+    # DATABASE_URL is the single switch:
+    #   * unset / sqlite:///…   -> local SQLite file (dev)
+    #   * postgres://…          -> PostgreSQL (Neon / Render) — auto-normalized
+    #                              to the postgresql+psycopg (psycopg 3) dialect.
+    # USE_DATABASE only gates the *optional* AI-interaction audit log; the token
+    # store, admin dashboard and commerce data always use DATABASE_URL.
     use_database: bool = field(
         default_factory=lambda: _as_bool(os.environ.get("USE_DATABASE", "false"), False)
     )
     database_url: str = field(
         default_factory=lambda: os.environ.get("DATABASE_URL", "sqlite:///mehaat.db")
+    )
+    # Connection-pool tuning for server backends (Postgres/MySQL). Ignored on
+    # SQLite. Sensible defaults suit Neon's Free tier + Render Free single worker.
+    db_pool_size: int = field(
+        default_factory=lambda: int(os.environ.get("DB_POOL_SIZE", "5") or "5")
+    )
+    db_max_overflow: int = field(
+        default_factory=lambda: int(os.environ.get("DB_MAX_OVERFLOW", "10") or "10")
+    )
+    db_pool_recycle: int = field(
+        default_factory=lambda: int(os.environ.get("DB_POOL_RECYCLE", "1800") or "1800")
+    )
+    db_pool_timeout: int = field(
+        default_factory=lambda: int(os.environ.get("DB_POOL_TIMEOUT", "30") or "30")
     )
 
     # --- v6.0 Enterprise Commerce (additive, on by default) ---

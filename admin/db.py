@@ -1,199 +1,98 @@
 """
 admin/db.py
 ------------
-Self-contained SQLite persistence for the Admin Dashboard.
+Persistence access layer for the Admin Dashboard.
 
-This uses the Python standard-library ``sqlite3`` module only — it has **no**
-dependency on the project's optional SQLAlchemy layer — so the dashboard has a
-durable, queryable data source whether or not ``USE_DATABASE`` is enabled. The
-database file lives on Render's mounted disk by default (see ``admin/config``),
-so data survives restarts and is shared across Gunicorn workers.
+Historically this module opened its own ``sqlite3`` connection to a private
+database file. It now routes every dashboard query through the **one** shared
+SQLAlchemy engine (:mod:`database.db`) via a small portable DBAPI shim
+(:mod:`database.compat`), so the dashboard automatically uses whichever backend
+``DATABASE_URL`` selects:
+
+    * ``sqlite:///…`` / unset  -> local SQLite file (dev)
+    * ``postgres://…``         -> PostgreSQL (Neon / Render)
+
+Crucially, the dashboard's existing hand-written SQL in :mod:`admin.tracker`,
+:mod:`admin.analytics` and :mod:`admin.routes` is **unchanged** — the shim
+translates ``?`` placeholders to the driver's paramstyle and returns rows that
+support both ``row["col"]`` and ``row[0]`` access on any backend. There is no
+``sqlite3.connect()`` here anymore.
+
+Public API (unchanged, relied upon across the dashboard):
+    get_conn(write: bool = False) -> context manager yielding a connection
+    init_db() -> ensure schema + seed admin user (idempotent)
 
 Design notes:
-    * WAL journal mode + a short busy timeout make concurrent reads/writes from
-      multiple Gunicorn workers safe.
-    * A new connection is opened per operation (sqlite3 connections are not
-      thread-safe to share); this is cheap for SQLite and avoids cross-thread
-      state. A module-level lock further serialises writers within a process.
-    * Schema creation is idempotent (``CREATE TABLE IF NOT EXISTS``), so calling
+    * The dashboard tables are ORM models (:mod:`database.models_admin`), so the
+      schema is created by the unified ``create_all`` on any backend and is
+      versioned by Alembic — no more hand-maintained ``CREATE TABLE`` DDL.
+    * Writers are serialised on SQLite (one file-writer) by the shim's lock; on
+      Postgres the connection pool + MVCC handle concurrency. Calling
       :func:`init_db` on every startup is safe and never destroys data.
 
 Tables (per the dashboard specification):
-    users, customers, messages, conversations, orders, products, ai_history
+    users, dash_customers, dash_conversations, messages, ai_history,
+    products, product_sends, dash_orders
 """
 
 from __future__ import annotations
 
-import os
-import sqlite3
 import threading
 from contextlib import contextmanager
 from typing import Iterator
 
 from admin.config import admin_config
+from database.compat import PortableConnection, portable_conn
 from utils.logging import logger
 
-_write_lock = threading.Lock()
 _initialised = False
 _init_lock = threading.Lock()
 
 
-def _connect() -> sqlite3.Connection:
-    """Open a configured SQLite connection with row access by column name."""
-    conn = sqlite3.connect(admin_config.db_path, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=30000;")
-    conn.execute("PRAGMA foreign_keys=ON;")
-    return conn
-
-
 @contextmanager
-def get_conn(write: bool = False) -> Iterator[sqlite3.Connection]:
-    """Yield a SQLite connection, committing on success for write operations.
+def get_conn(write: bool = False) -> Iterator[PortableConnection]:
+    """Yield a portable connection, committing on success for write operations.
+
+    Backward-compatible with the previous ``sqlite3``-based helper: callers keep
+    using ``conn.execute("… ?", params).fetchone()``, ``row["col"]`` / ``row[0]``
+    and ``cursor.rowcount`` exactly as before, on SQLite *or* Postgres.
 
     Args:
-        write: When True, serialise via the module write-lock and commit on exit.
+        write: When True, commit on clean exit and roll back on error (and, on
+            SQLite, serialise writers via the shim's process lock).
     """
     ensure_initialised()
-    if write:
-        _write_lock.acquire()
-    conn = _connect()
-    try:
+    with portable_conn(write=write) as conn:
         yield conn
-        if write:
-            conn.commit()
-    except Exception:
-        if write:
-            conn.rollback()
-        raise
-    finally:
-        conn.close()
-        if write:
-            _write_lock.release()
-
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    username      TEXT UNIQUE NOT NULL,
-    password_hash TEXT,
-    role          TEXT DEFAULT 'admin',
-    created_at    TEXT NOT NULL,
-    last_login_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS dash_customers (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    wa_number     TEXT UNIQUE NOT NULL,
-    profile_name  TEXT,
-    language      TEXT,
-    email         TEXT,
-    tags          TEXT,
-    first_seen_at TEXT NOT NULL,
-    last_seen_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_customers_wa ON dash_customers(wa_number);
-
-CREATE TABLE IF NOT EXISTS dash_conversations (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    wa_number       TEXT UNIQUE NOT NULL,
-    profile_name    TEXT,
-    last_message    TEXT,
-    last_direction  TEXT,
-    message_count   INTEGER DEFAULT 0,
-    unread_count    INTEGER DEFAULT 0,
-    status          TEXT DEFAULT 'open',
-    started_at      TEXT NOT NULL,
-    last_message_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_conversations_last ON dash_conversations(last_message_at);
-
-CREATE TABLE IF NOT EXISTS messages (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    wa_number   TEXT NOT NULL,
-    direction   TEXT NOT NULL,          -- 'in' (customer) | 'out' (bot)
-    text        TEXT,
-    language    TEXT,
-    intent      TEXT,
-    latency_ms  INTEGER,
-    created_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_messages_wa ON messages(wa_number);
-CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
-
-CREATE TABLE IF NOT EXISTS ai_history (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    wa_number     TEXT NOT NULL,
-    model         TEXT,
-    user_message  TEXT,                 -- PII-masked
-    prompt_context TEXT,
-    response      TEXT,
-    latency_ms    INTEGER,
-    fallback_used INTEGER DEFAULT 0,
-    error         TEXT,
-    created_at    TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_ai_wa ON ai_history(wa_number);
-CREATE INDEX IF NOT EXISTS idx_ai_created ON ai_history(created_at);
-
-CREATE TABLE IF NOT EXISTS products (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_ref   TEXT UNIQUE NOT NULL, -- product id or normalised title
-    title         TEXT,
-    price         TEXT,
-    currency      TEXT,
-    times_sent    INTEGER DEFAULT 0,
-    last_sent_at  TEXT
-);
-
-CREATE TABLE IF NOT EXISTS product_sends (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    wa_number   TEXT NOT NULL,
-    query       TEXT,
-    title       TEXT,
-    price       TEXT,
-    created_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_product_sends_created ON product_sends(created_at);
-
-CREATE TABLE IF NOT EXISTS dash_orders (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_name        TEXT,
-    wa_number         TEXT,
-    customer_name     TEXT,
-    email             TEXT,
-    phone             TEXT,
-    financial_status  TEXT,
-    fulfillment_status TEXT,
-    total_price       TEXT,
-    currency          TEXT,
-    tracking          TEXT,
-    looked_up_at      TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_orders_name ON dash_orders(order_name);
-"""
 
 
 def init_db() -> None:
-    """Create the schema if needed and seed the admin user row (idempotent)."""
-    directory = os.path.dirname(admin_config.db_path)
-    if directory:
-        os.makedirs(directory, exist_ok=True)
+    """Create the dashboard schema if needed and seed the admin user (idempotent).
 
-    conn = _connect()
-    try:
-        conn.executescript(_SCHEMA)
-        conn.commit()
+    Schema creation is delegated to the ONE unified ``create_all`` (the admin
+    tables are ORM models registered on the shared ``Base``), so it works on
+    SQLite and PostgreSQL alike. The admin ``users`` row is then seeded via the
+    portable connection.
+    """
+    # Ensure every table (incl. the dash_* + users tables) exists on the active
+    # backend. Idempotent and safe on every boot.
+    from database.db import init_db as _init_all_tables
+
+    _init_all_tables()
+
+    with portable_conn(write=True) as conn:
         _seed_admin_user(conn)
-        conn.commit()
-        logger.info("ADMIN | SQLite datastore ready at %s", admin_config.db_path)
-    finally:
-        conn.close()
+
+    try:
+        from database.db import backend_name
+
+        logger.info("ADMIN | Datastore ready on %s backend", backend_name())
+    except Exception:  # noqa: BLE001 - logging must never break startup
+        logger.info("ADMIN | Datastore ready")
 
 
-def _seed_admin_user(conn: sqlite3.Connection) -> None:
-    """Ensure a ``users`` row exists for the configured admin (schema table 13)."""
+def _seed_admin_user(conn: PortableConnection) -> None:
+    """Ensure a ``users`` row exists for the configured admin (idempotent)."""
     from admin.security import hash_password  # local import avoids cycle
 
     username = admin_config.username
@@ -225,8 +124,8 @@ def ensure_initialised() -> None:
         try:
             init_db()
         finally:
-            # Mark initialised even on failure to avoid hammering a broken path;
-            # individual operations will still surface errors via their guards.
+            # Mark initialised even on failure to avoid hammering a broken
+            # backend; individual operations still surface their own errors.
             _initialised = True
 
 

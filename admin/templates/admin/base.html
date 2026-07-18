@@ -20,6 +20,7 @@
       <div class="nav-section">Overview</div>
       <a class="nav-link {{ 'active' if nav_active == 'admin.dashboard' }}" href="{{ url_for('admin.dashboard') }}"><i class="bi bi-grid-1x2"></i> Dashboard</a>
       <a class="nav-link {{ 'active' if nav_active in ['admin.inbox','admin.chat'] }}" href="{{ url_for('admin.inbox') }}"><i class="bi bi-chat-dots"></i> Live Inbox <span class="badge-count" data-unread-badge style="display:none">0</span></a>
+      {% if has_view('admin_support.console') %}<a class="nav-link {{ 'active' if nav_active == 'admin_support.console' }}" href="{{ url_for('admin_support.console') }}"><i class="bi bi-headset"></i> Support Console <span class="badge-count" data-support-unread style="display:none">0</span></a>{% endif %}
       <a class="nav-link {{ 'active' if nav_active == 'admin.ai_history' }}" href="{{ url_for('admin.ai_history') }}"><i class="bi bi-robot"></i> AI History</a>
       <div class="nav-section">Commerce</div>
       {% if commerce_ui %}

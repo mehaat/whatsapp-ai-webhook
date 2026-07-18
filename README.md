@@ -1,8 +1,3 @@
-
-# ME-HAAT Fashion AI Bot v5.1 Production Edition
-
-Production-ready WhatsApp AI Sales Assistant for **ME-HAAT Fashion** (Premium Sarees & Ethnic Wear) — on full **Shopify OAuth**, a modular architecture, live product cards, a login-protected admin dashboard, and enterprise foundations.
-=======
 # ME-HAAT Fashion AI Bot v10.1 Stable Edition
 
 A stability & hardening release over v10.0 — **no features removed, full backward compatibility, zero regression** (~361 tests passing). See `CHANGELOG.md`, `UPGRADE_v10_TO_v10.1.md`, `DATABASE_MIGRATION.md`, and `TEST_CHECKLIST.md`.
@@ -92,7 +87,6 @@ Everything from v5.1 is preserved and backward compatible. The whole commerce su
 - **Enterprise data model + automatic migrations** — new `orders`, `order_items`, `payments`, `tracking`, `invoices`, `notifications`, `audit_logs`, `analytics` tables on SQLite **or** PostgreSQL, created and additively migrated on startup (no manual DB steps).
 - **Security** — JWT/API-key auth on the order API, Meta webhook signature verification (v5.1), Shopify HMAC (existing), per-provider payment webhook signature checks, CSRF on admin actions, parameterized SQL throughout.
 - **Tests** — 78 passing, including an end-to-end catalog-order webhook test.
-
 
 ## What's New in v5.1 (Production Edition)
 

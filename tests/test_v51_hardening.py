@@ -110,9 +110,13 @@ def test_dedupe_window_is_bounded(monkeypatch):
 
 def test_normalize_postgres_scheme():
     from database.db import normalize_database_url
+    # Bare postgres:// / postgresql:// normalize to the psycopg 3 dialect.
     assert normalize_database_url("postgres://u:p@h:5432/db") == \
-        "postgresql+psycopg2://u:p@h:5432/db"
+        "postgresql+psycopg://u:p@h:5432/db"
     assert normalize_database_url("postgresql://u:p@h/db") == \
+        "postgresql+psycopg://u:p@h/db"
+    # An explicitly chosen driver is respected (not rewritten).
+    assert normalize_database_url("postgresql+psycopg2://u:p@h/db") == \
         "postgresql+psycopg2://u:p@h/db"
     # sqlite untouched
     assert normalize_database_url("sqlite:///mehaat.db") == "sqlite:///mehaat.db"

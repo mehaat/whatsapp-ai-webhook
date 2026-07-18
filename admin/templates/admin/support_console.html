@@ -1,0 +1,156 @@
+{% extends "admin/base.html" %}
+{% block title %}Support Console{% endblock %}
+{% block heading %}Live WhatsApp Support Console{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('admin.static', filename='support_console.css') }}" />
+
+<div class="sc-root" id="sc-root" data-console-theme="light">
+
+  <!-- Live stat bar -->
+  <div class="sc-stats" id="sc-stats">
+    <div class="sc-stat sc-stat--live"><b data-stat="customers_online">0</b><span>Online</span></div>
+    <div class="sc-stat sc-stat--pending"><b data-stat="pending_replies">0</b><span>Pending</span></div>
+    <div class="sc-stat"><b data-stat="todays_messages">0</b><span>Msgs Today</span></div>
+    <div class="sc-stat"><b data-stat="todays_orders">0</b><span>Orders Today</span></div>
+    <div class="sc-stat"><b data-stat="ai_replies">0</b><span>AI Replies</span></div>
+    <div class="sc-stat"><b data-stat="manual_replies">0</b><span>Manual</span></div>
+    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <button class="sc-icon-btn" id="sc-sound-toggle" title="Toggle sound"><i class="bi bi-volume-up"></i></button>
+      <button class="sc-icon-btn" id="sc-theme-toggle" title="Toggle dark mode"><i class="bi bi-moon-stars"></i></button>
+    </div>
+  </div>
+
+  <!-- Inbox -->
+  <aside class="sc-col sc-col--inbox">
+    <div class="sc-inbox-head">
+      <input class="sc-search" id="sc-search" type="text" placeholder="Search name or number…" />
+      <button class="sc-icon-btn" id="sc-filter-unread" title="Unread only"><i class="bi bi-filter"></i></button>
+    </div>
+    <div class="sc-conv-list" id="sc-conv-list"></div>
+  </aside>
+
+  <!-- Chat -->
+  <main class="sc-col sc-col--chat">
+    <div id="sc-chat-empty" class="sc-empty">
+      <div>
+        <i class="bi bi-chat-heart"></i>
+        <div>Select a conversation to start replying.</div>
+      </div>
+    </div>
+
+    <div id="sc-chat" style="display:none;flex:1;flex-direction:column;min-height:0">
+      <header class="sc-chat-head">
+        <button class="sc-icon-btn" id="sc-back" style="display:none"><i class="bi bi-arrow-left"></i></button>
+        <div class="sc-avatar" id="sc-chat-avatar">?</div>
+        <div class="sc-chat-title">
+          <b id="sc-chat-name">—</b>
+          <small id="sc-chat-number"></small>
+        </div>
+        <div class="sc-chat-actions">
+          <label class="sc-toggle" id="sc-ai-toggle" title="AI on = bot auto-replies; off = manual mode">
+            <span class="sc-switch"></span><span id="sc-ai-label">AI</span>
+          </label>
+          <button class="sc-icon-btn" id="sc-shopify-btn" title="Shopify"><i class="bi bi-bag"></i></button>
+          <button class="sc-icon-btn" id="sc-pay-btn" title="Payment link"><i class="bi bi-credit-card"></i></button>
+        </div>
+      </header>
+
+      <div class="sc-manual-banner" id="sc-manual-banner">
+        <i class="bi bi-hand-index-thumb"></i> Manual mode is ON — the bot will not auto-reply. You are in control.
+      </div>
+
+      <div class="sc-messages" id="sc-messages"></div>
+
+      <!-- Shopify quick panel -->
+      <div id="sc-shopify-panel" style="display:none;padding:8px 12px;border-top:1px solid var(--sc-border);background:var(--sc-panel)">
+        <div class="sc-row">
+          <input class="sc-search" id="sc-shopify-q" placeholder="Search products…" style="flex:1" />
+          <button class="sc-btn" id="sc-shopify-send">Send Cards</button>
+        </div>
+        <div id="sc-shopify-results" style="margin-top:8px"></div>
+      </div>
+
+      <!-- Payment quick panel -->
+      <div id="sc-pay-panel" style="display:none;padding:8px 12px;border-top:1px solid var(--sc-border);background:var(--sc-panel)">
+        <div class="sc-row">
+          <input class="sc-select" id="sc-pay-amount" type="number" min="1" placeholder="Amount" />
+          <input class="sc-select" id="sc-pay-currency" value="INR" style="max-width:80px" />
+          <button class="sc-btn" id="sc-pay-generate">Generate + Send</button>
+        </div>
+        <div id="sc-pay-result" style="margin-top:6px;font-size:12px"></div>
+      </div>
+
+      <!-- Composer -->
+      <div class="sc-composer">
+        <div class="sc-emoji-tray" id="sc-emoji-tray"></div>
+        <div class="sc-attach-preview" id="sc-attach-preview">
+          <i class="bi bi-paperclip"></i><span id="sc-attach-name"></span>
+          <button class="sc-icon-btn" id="sc-attach-clear"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="sc-composer-row">
+          <button class="sc-icon-btn" id="sc-emoji-btn" title="Emoji"><i class="bi bi-emoji-smile"></i></button>
+          <button class="sc-icon-btn" id="sc-attach-btn" title="Attach image / PDF / voice"><i class="bi bi-paperclip"></i></button>
+          <input type="file" id="sc-file" accept="image/*,application/pdf,audio/*" style="display:none" />
+          <textarea class="sc-input" id="sc-text" rows="1" placeholder="Type a message…  (Enter to send)"></textarea>
+          <button class="sc-send" id="sc-send" title="Send"><i class="bi bi-send"></i></button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Profile drawer -->
+  <aside class="sc-col sc-col--profile" id="sc-profile">
+    <div class="sc-profile-head">
+      <div class="sc-avatar" id="sc-prof-avatar">?</div>
+      <b id="sc-prof-name">—</b>
+      <div style="color:var(--sc-muted);font-size:13px" id="sc-prof-number"></div>
+    </div>
+    <div class="sc-profile-section">
+      <h4>Overview</h4>
+      <div class="sc-metric-grid">
+        <div class="sc-metric"><b data-prof="order_count">0</b><small>Orders</small></div>
+        <div class="sc-metric"><b data-prof="total_spend">0</b><small>Spend</small></div>
+        <div class="sc-metric"><b data-prof="message_count">0</b><small>Messages</small></div>
+        <div class="sc-metric"><b data-prof="conversation_count">0</b><small>Convs</small></div>
+      </div>
+      <div class="sc-kv"><span>Language</span><b data-prof="language">—</b></div>
+      <div class="sc-kv"><span>Email</span><b data-prof="email">—</b></div>
+      <div class="sc-kv"><span>Last order</span><b data-prof="last_order">—</b></div>
+    </div>
+    <div class="sc-profile-section">
+      <h4>Assignment &amp; Status</h4>
+      <div class="sc-row">
+        <select class="sc-select" id="sc-assign"></select>
+      </div>
+      <div class="sc-row" style="margin-top:6px">
+        <select class="sc-select" id="sc-status">
+          <option value="open">Open</option>
+          <option value="pending">Pending</option>
+          <option value="closed">Closed</option>
+        </select>
+      </div>
+    </div>
+    <div class="sc-profile-section">
+      <h4>Internal Notes</h4>
+      <div class="sc-notes" id="sc-notes"></div>
+      <textarea class="sc-note-input" id="sc-note-text" rows="2" placeholder="Add an admin-only note…"></textarea>
+      <button class="sc-btn sc-btn--block" id="sc-note-add">Add Note</button>
+    </div>
+  </aside>
+</div>
+
+<audio id="sc-ping" preload="auto"
+  src="data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="></audio>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.SC_CONFIG = {
+    base: "{{ url_for('admin_support.console') }}".replace(/\/console$/, ''),
+    csrf: document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+    me: "{{ session.get('admin_user', 'admin') }}",
+    pollMs: 3000
+  };
+</script>
+<script src="{{ url_for('admin.static', filename='support_console.js') }}"></script>
+{% endblock %}

@@ -1,6 +1,7 @@
-
-# ME-HAAT Fashion AI Bot v10.1 Stable Edition — runtime dependencies
-# v10.1 includes all v10.0 features plus stability fixes. No additional runtime dependencies are required.
+# ME-HAAT Fashion AI Bot v10.0 Enterprise Edition — runtime dependencies
+# v10.0 (AI agents, RAG, MCP, approvals) adds no new hard dependencies — the
+# tool registry, TF-IDF retriever (numpy), MCP JSON-RPC server, and approval
+# workflow are built on the existing stack.
 # Core — unchanged
 Flask==3.0.3
 gunicorn==22.0.0
@@ -12,10 +13,13 @@ python-dotenv==1.0.1
 SQLAlchemy>=2.0,<2.1
 # cryptography enables optional token encryption at rest (TOKEN_ENCRYPTION_KEY).
 cryptography>=42.0.0
-# PostgreSQL driver — used when DATABASE_URL points at Postgres (e.g. Render
-# Managed Postgres). db.py normalizes Render's postgres:// scheme to the
-# postgresql+psycopg2 dialect automatically. Harmless when running on SQLite.
-psycopg2-binary>=2.9.9
+# PostgreSQL driver — used when DATABASE_URL points at Postgres (Neon/Render).
+# psycopg 3 ("psycopg") is chosen over psycopg2 for reliable prebuilt wheels on
+# modern Python (incl. 3.13/3.14) and first-class Neon support. database/db.py
+# normalizes bare postgres:// URLs to the postgresql+psycopg dialect
+# automatically. The [binary] extra ships a self-contained libpq wheel (no build
+# toolchain needed on Render). Harmless when running on SQLite.
+psycopg[binary]>=3.1,<4
 
 # v4.2 additions — Admin Dashboard exports.
 # openpyxl powers Excel (.xlsx) export; reportlab powers PDF export. Both are

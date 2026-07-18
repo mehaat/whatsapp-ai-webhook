@@ -72,8 +72,6 @@ def init_webhook(handler: MessageHandler) -> None:
     _message_handler = handler
 
 
-
-
 def init_order_webhook(handler: OrderHandler) -> None:
     """Register the callback invoked for each inbound WhatsApp catalog order.
 
@@ -105,7 +103,6 @@ def init_audio_webhook(handler: OrderHandler) -> None:
     """
     global _audio_handler
     _audio_handler = handler
-
 
 
 def _already_processed(message_id: str) -> bool:
@@ -212,13 +209,29 @@ def _resolve_tenant(value: Dict[str, Any]) -> None:
 
 
 def _process_status_updates(value: Dict[str, Any]) -> None:
-    """Log message status updates (sent, delivered, read, failed)."""
+    """Log message status updates and persist them for the support console.
+
+    v10.2: delivery/read receipts (``sent`` -> ``delivered`` -> ``read`` /
+    ``failed``) are persisted against the WhatsApp message id so the live
+    console can show per-message ticks. Persistence is fully guarded and never
+    breaks webhook processing.
+    """
     for status in value.get("statuses", []):
         status_type = status.get("status")
         recipient = status.get("recipient_id")
+        wamid = status.get("id", "")
         logger.info("STATUS | %s -> %s", recipient, status_type)
         if status_type == "failed":
             logger.error("STATUS | Message failed for %s: %s", recipient, status.get("errors", []))
+        try:
+            from admin import support_console as _support
+
+            _support.record_status(
+                wamid, status_type or "", wa_number=recipient or "",
+                timestamp=str(status.get("timestamp", "")),
+            )
+        except Exception as exc:  # noqa: BLE001 - status persistence is best-effort
+            logger.debug("STATUS | persist skipped: %s", exc)
 
 
 def _mark_read_best_effort(message_id: str) -> None:
@@ -253,8 +266,6 @@ def _process_messages(value: Dict[str, Any]) -> None:
         # Best-effort read receipt; independent of downstream handling.
         _mark_read_best_effort(message_id)
 
-
-
         message_type = message.get("type")
 
         # WhatsApp Commerce catalog order (v6.0): route to the order handler
@@ -284,7 +295,6 @@ def _process_messages(value: Dict[str, Any]) -> None:
             except Exception as exc:  # noqa: BLE001 - never crash the webhook
                 logger.error("AUDIO | Audio handler failed for %s: %s", wa_number, exc)
             continue
-
 
         if not _rate_limiter.is_allowed(wa_number):
             logger.warning("RATE_LIMIT | Blocked message from %s", wa_number)

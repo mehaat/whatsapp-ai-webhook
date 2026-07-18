@@ -2,15 +2,14 @@ services:
   - type: web
     name: mehaat-fashion-ai-bot
     env: python
-    plan: starter
+    plan: free
     region: singapore
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 30
+    # Run Alembic migrations before boot, then start Gunicorn. On Render Free
+    # there is NO persistent disk — durable state lives in Neon PostgreSQL
+    # (DATABASE_URL below), so no `disk:` mount is declared.
+    startCommand: alembic upgrade head && gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 30
     healthCheckPath: /health
-    disk:
-      name: shop-token-store
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: VERIFY_TOKEN
         sync: false
@@ -33,8 +32,10 @@ services:
       # Meta App Secret — verifies inbound webhook signatures (recommended).
       - key: WHATSAPP_APP_SECRET
         sync: false
+      # Legacy JSON token path — no longer used for persistence (tokens live in
+      # DATABASE_URL now). Kept on an ephemeral path only for backward-compat.
       - key: TOKEN_STORE_PATH
-        value: /var/data/shop_tokens.json
+        value: /tmp/shop_tokens.json
       - key: PYTHON_VERSION
         value: 3.12.7
       # --- v4.0 (all optional; safe defaults preserve v3.0 behaviour) ---
@@ -47,13 +48,16 @@ services:
       # Structured logs: "text" (default) or "json".
       - key: LOG_FORMAT
         value: "text"
-      # Optional persistence layer (SQLAlchemy). "false" keeps in-memory only.
+      # Enables the optional AI-interaction audit log. The token store, admin
+      # dashboard and commerce data persist via DATABASE_URL regardless.
       - key: USE_DATABASE
         value: "true"
-      # Database URL used only when USE_DATABASE=true (SQLite default on the
-      # mounted disk; set a Postgres URL for durable, multi-worker storage).
+      # DATABASE_URL is REQUIRED on Render Free (no persistent disk). Paste your
+      # Neon connection string here (Neon dashboard -> Connection Details). A
+      # bare postgres:// URL is auto-normalized to the psycopg 3 dialect.
+      # Example: postgresql://user:pass@ep-xxx.region.aws.neon.tech/dbname?sslmode=require
       - key: DATABASE_URL
-        value: sqlite:////var/data/mehaat.db
+        sync: false
       # Optional Fernet key to encrypt Shopify tokens at rest (blank -> plaintext).
       - key: TOKEN_ENCRYPTION_KEY
         sync: false
@@ -69,18 +73,19 @@ services:
       # Stable session-signing secret (recommended). Generate a random value.
       - key: ADMIN_SECRET_KEY
         sync: false
-      # v10.1: ADMIN_DB_PATH intentionally unset so the dashboard shares the ONE
-      # unified /var/data/mehaat.db (the migration merges any legacy admin DB).
+      # ADMIN_DB_PATH intentionally unset so the dashboard shares the ONE unified
+      # database selected by DATABASE_URL (Neon Postgres in production).
       - key: ADMIN_SESSION_TIMEOUT_MIN
         value: "60"
       # --- v6.0 Enterprise Commerce (optional; safe defaults) ---
-      # Commerce orders/payments/tracking persist via DATABASE_URL (the SQLite
-      # file on the mounted disk above, or a Postgres URL). Invoices are written
-      # to the persistent disk so they survive restarts.
+      # Commerce orders/payments/tracking persist via DATABASE_URL (Neon
+      # Postgres). NOTE: /tmp is EPHEMERAL on Render Free — generated invoice /
+      # export PDFs do not survive a restart; regenerate on demand or offload to
+      # object storage if you need them durable.
       - key: COMMERCE_ENABLED
         value: "true"
       - key: INVOICE_OUTPUT_DIR
-        value: /var/data/invoices
+        value: /tmp/invoices
       - key: DEFAULT_CURRENCY
         value: "INR"
       - key: DELIVERY_ESTIMATE
@@ -176,7 +181,7 @@ services:
       - key: DATA_RETENTION_DAYS
         value: "0"
       - key: COMPLIANCE_EXPORT_DIR
-        value: /var/data/exports
+        value: /tmp/exports
       # --- v9.0 ---
       - key: CACHE_ENABLED
         value: "true"
@@ -204,11 +209,11 @@ services:
       - key: APPROVAL_REQUIRED
         value: "true"
       # --- v10.1 Stable ---
-      # Absolute sqlite path already set via DATABASE_URL above; UNIFIED_DB_PATH
-      # can override the canonical path explicitly if needed.
+      # Backend is chosen by DATABASE_URL (Neon Postgres above). UNIFIED_DB_PATH
+      # only applies to a local SQLite fallback and is not needed on Render.
       - key: STRICT_STARTUP
         value: "false"
       - key: DEV_MODE
         value: "false"
       - key: LOG_DIR
-        value: /var/data/logs
+        value: /tmp/logs

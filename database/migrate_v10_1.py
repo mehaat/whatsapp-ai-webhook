@@ -99,11 +99,28 @@ def merge_admin_db(unified_path: Optional[str] = None) -> dict:
     """Merge a legacy ``mehaat_admin.db`` into the unified database.
 
     Idempotent and safe: no-op when no legacy file exists. Returns a report.
+
+    Scope: this is a legacy, **SQLite-only** one-time recovery step that merges a
+    pre-v10.1 ``mehaat_admin.db`` into the unified SQLite file via ``ATTACH``.
+    When the active backend is PostgreSQL (Neon/Render) there is no legacy
+    SQLite admin file to merge, so this returns an immediate no-op and never
+    opens a ``sqlite3`` connection.
     """
     from utils.dbpath import canonical_sqlite_path
 
-    unified_path = unified_path or canonical_sqlite_path()
     report = {"migrated": False, "source": None, "copied": {}, "renamed_to": None}
+
+    # Only meaningful on SQLite; skip entirely on server backends.
+    try:
+        from database.db import is_sqlite
+
+        if not is_sqlite():
+            logger.info("MIGRATE_v10_1 | Non-SQLite backend; legacy admin merge skipped")
+            return report
+    except Exception as exc:  # noqa: BLE001 - be conservative, but don't crash
+        logger.debug("MIGRATE_v10_1 | backend check failed (%s); assuming SQLite", exc)
+
+    unified_path = unified_path or canonical_sqlite_path()
 
     legacy_paths = _legacy_admin_db_paths(unified_path)
     if not legacy_paths:
